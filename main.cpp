@@ -1,6 +1,6 @@
 #include <iostream>
 
-#include "Brain.h"
+#include "brain/Brain.h"
 
 int main() {
 

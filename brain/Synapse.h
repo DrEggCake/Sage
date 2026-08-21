@@ -23,10 +23,10 @@ public:
     void stimulate();
     void decayEligibility(double factor);
 
-    double getStrength();
+    double getStrength() const;
     void setStrength(double strength);
 
-    double getEligibility();
+    double getEligibility() const;
     void setEligibility(double eligibility);
 };
 

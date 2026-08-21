@@ -76,6 +76,45 @@ public:
         int layer2ToLayer3,
         int layer3ToOutput
     );
+
+    // Serialization
+    std::vector<int> getLayerSizes() const;
+    std::vector<int> getWiringLimits() const;
+
+    std::vector<double> getNeuronThresholds() const;
+    std::vector<double> getSynapseStrengths() const;
+
+    void setNeuronThresholds(
+        const std::vector<double>& thresholds
+    );
+
+    void setSynapseStrengths(
+        const std::vector<double>& strengths
+    );
+
+    // Learning configuration
+    double getLearningRate() const;
+    double getEligibilityDecay() const;
+    double getLeakRate() const;
+
+    void setLearningRate(double value);
+    void setEligibilityDecay(double value);
+    void setLeakRate(double value);
+
+    // Training statistics
+    int getEpisodesTrained() const;
+    int getSuccesses() const;
+    double getTotalReward() const;
+    long getTotalSteps() const;
+    long getTotalFired() const;
+    double getBestReward() const;
+
+    void setEpisodesTrained(int value);
+    void setSuccesses(int value);
+    void setTotalReward(double value);
+    void setTotalSteps(long value);
+    void setTotalFired(long value);
+    void setBestReward(double value);
 };
 
 #endif

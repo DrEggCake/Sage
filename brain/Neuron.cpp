@@ -55,11 +55,11 @@ void Neuron::addSynapseOut(Synapse* synapse) {
     synapsesOut.push_back(synapse);
 }
 
-double Neuron::getVoltage() {
+double Neuron::getVoltage() const {
     return VOLTAGE;
 }
 
-double Neuron::getThreshold() {
+double Neuron::getThreshold() const {
     return THRESHOLD;
 }
 
@@ -67,7 +67,7 @@ void Neuron::setThreshold(double threshold) {
     THRESHOLD = threshold;
 }
 
-bool Neuron::firedThisEpisodeCheck() {
+bool Neuron::firedThisEpisodeCheck() const {
     return firedThisEpisode;
 }
 
@@ -75,6 +75,6 @@ std::vector<Synapse*>& Neuron::getSynapsesOut() {
     return synapsesOut;
 }
 
-Neuron::NeuronType Neuron::getType() {
+Neuron::NeuronType Neuron::getType() const {
     return neuronType;
 }

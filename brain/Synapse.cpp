@@ -27,7 +27,7 @@ void Synapse::decayEligibility(double factor) {
     ELIGIBILITY *= factor;
 }
 
-double Synapse::getStrength() {
+double Synapse::getStrength() const {
     return STRENGTH;
 }
 
@@ -35,7 +35,7 @@ void Synapse::setStrength(double strength) {
     STRENGTH = strength;
 }
 
-double Synapse::getEligibility() {
+double Synapse::getEligibility() const {
     return ELIGIBILITY;
 }
 

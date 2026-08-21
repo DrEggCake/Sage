@@ -42,15 +42,15 @@ public:
     void addSynapseIn(Synapse* synapse);
     void addSynapseOut(Synapse* synapse);
 
-    double getVoltage();
-    double getThreshold();
+    double getVoltage() const;
+    double getThreshold() const;
     void setThreshold(double threshold);
 
-    bool firedThisEpisodeCheck();
+    bool firedThisEpisodeCheck() const;
 
     std::vector<Synapse*>& getSynapsesOut();
 
-    NeuronType getType();
+    NeuronType getType() const;
 };
 
 #endif

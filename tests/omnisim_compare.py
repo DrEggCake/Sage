@@ -217,6 +217,11 @@ def compare_trajectories(mujo_traj, omni_traj, name):
               "differs and friction/damping map imperfectly.")
 
 
+def set_base_url(url):
+    global HARNESS_URL
+    HARNESS_URL = url
+
+
 def main():
     parser = argparse.ArgumentParser(description="OmniSim cross-simulator comparison")
     parser.add_argument("--harness-url", default=HARNESS_URL)
@@ -224,8 +229,7 @@ def main():
                         choices=["all", "cart_pole", "ball_drop", "arm_reach"])
     args = parser.parse_args()
 
-    global HARNESS_URL
-    HARNESS_URL = args.harness_url
+    set_base_url(args.harness_url)
 
     print("=" * 50)
     print("  Sage Cross-Simulator Comparison")

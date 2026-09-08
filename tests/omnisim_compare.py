@@ -108,8 +108,9 @@ def check_harness():
 
 
 def load_world(path):
+    abs_path = str(Path(path).resolve())
     result = http_post("/world/load", {
-        "path": path,
+        "path": abs_path,
         "wait_s": 30.0,
         "with_supervisor": True,
     })

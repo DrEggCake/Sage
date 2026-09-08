@@ -40,6 +40,8 @@ jobs:
             libglib2.0-0 libfontconfig1 libxkbcommon0 libxkbcommon-x11-0 \
             libvulkan1 mesa-vulkan-drivers \
             libsndio7.0 \
+            libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
+            libxcb-render-util0 libxcb-xinerama0 libxcb-xkb1 \
             libxrandr2 libxinerama1 libxcursor1 libxi6
 
       # ---- MuJoCo baseline (fast; uploads even if the long OmniSim build fails) ----

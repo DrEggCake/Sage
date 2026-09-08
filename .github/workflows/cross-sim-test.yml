@@ -144,25 +144,34 @@ jobs:
           export WEBOTS_TMPDIR=/tmp
           export LIBGL_ALWAYS_SOFTWARE=1
           export QT_DEBUG_PLUGINS=1
-          # One scenario per harness session: the injected supervisor caches the
-          # scene/robot roster at its first load, so world-swaps within a
-          # session leave /scene/tree and /robots answering stale. Restart the
-          # harness for each scenario.
+          # One scenario per harness session, each on its own port: the
+          # supervisor caches the scene/robot roster at its first load, so a
+          # session cannot serve multiple worlds correctly, and an orphaned
+          # harness from an earlier scenario would otherwise answer the curl
+          # below with a stale world. setsid lets us kill the whole group.
           for SC in cart_pole ball_drop arm_reach; do
+            case $SC in
+              cart_pole)  PORT=6811;;
+              ball_drop)  PORT=6862;;
+              arm_reach)  PORT=6921;;
+            esac
             cd omnisim
-            OMNISIM_NO_WINDOW=1 xvfb-run -a --server-args="-screen 0 1280x1024x24" \
-              python -m omnisim harness --port 6789 \
+            pkill -f "omnisim_harness.py.*--port $PORT" 2>/dev/null || true
+            sleep 1
+            setsid xvfb-run -a --server-args="-screen 0 1280x1024x24" \
+              python -m omnisim harness --host 127.0.0.1 --port $PORT \
+              --supervisor-port $((PORT + 10)) \
               > "$RUNNER_TEMP/omnisim-harness-$SC.log" 2>&1 &
             HPID=$!
             for i in $(seq 1 72); do
-              if curl -fsS http://127.0.0.1:6789/healthz >/dev/null 2>&1; then break; fi
+              if curl -fsS http://127.0.0.1:$PORT/healthz >/dev/null 2>&1; then break; fi
               sleep 5
             done
-            curl -fsS http://127.0.0.1:6789/healthz || echo "HARNESS DID NOT COME UP ($SC)"
+            curl -fsS http://127.0.0.1:$PORT/healthz || echo "HARNESS DID NOT COME UP ($SC)"
             cd "$GITHUB_WORKSPACE"
             OMNISIM_DUMP_TREE=1 python3 tests/omnisim_compare.py \
-              --scenario "$SC" --harness-url http://127.0.0.1:6789
-            kill $HPID 2>/dev/null || true
+              --scenario "$SC" --harness-url http://127.0.0.1:$PORT
+            kill -- -$HPID 2>/dev/null || true
             sleep 2
           done
 

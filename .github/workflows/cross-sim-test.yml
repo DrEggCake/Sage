@@ -127,8 +127,11 @@ jobs:
           export OMNISIM_HOME="$GITHUB_WORKSPACE/omnisim"
           export WEBOTS_HOME="$GITHUB_WORKSPACE/omnisim"
           export LD_LIBRARY_PATH="$GITHUB_WORKSPACE/omnisim/lib/webots${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          export QT_QPA_PLATFORM=xcb
+          export WEBOTS_TMPDIR=/tmp
           export LIBGL_ALWAYS_SOFTWARE=1
-          OMNISIM_NO_WINDOW=1 xvfb-run -a python -m omnisim harness --port 6789 \
+          OMNISIM_NO_WINDOW=1 xvfb-run -a --server-args="-screen 0 1280x1024x24" \
+            python -m omnisim harness --port 6789 \
             > "$RUNNER_TEMP/omnisim-harness.log" 2>&1 &
           HPID=$!
           for i in $(seq 1 72); do

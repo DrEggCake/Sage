@@ -137,7 +137,6 @@ jobs:
         env:
           OMNISIM_NO_WINDOW: "1"
         run: |
-          cd omnisim
           export OMNISIM_HOME="$GITHUB_WORKSPACE/omnisim"
           export WEBOTS_HOME="$GITHUB_WORKSPACE/omnisim"
           export LD_LIBRARY_PATH="$GITHUB_WORKSPACE/omnisim/lib/webots${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
@@ -145,18 +144,27 @@ jobs:
           export WEBOTS_TMPDIR=/tmp
           export LIBGL_ALWAYS_SOFTWARE=1
           export QT_DEBUG_PLUGINS=1
-          OMNISIM_NO_WINDOW=1 xvfb-run -a --server-args="-screen 0 1280x1024x24" \
-            python -m omnisim harness --port 6789 \
-            > "$RUNNER_TEMP/omnisim-harness.log" 2>&1 &
-          HPID=$!
-          for i in $(seq 1 72); do
-            if curl -fsS http://127.0.0.1:6789/healthz >/dev/null 2>&1; then break; fi
-            sleep 5
+          # One scenario per harness session: the injected supervisor caches the
+          # scene/robot roster at its first load, so world-swaps within a
+          # session leave /scene/tree and /robots answering stale. Restart the
+          # harness for each scenario.
+          for SC in cart_pole ball_drop arm_reach; do
+            cd omnisim
+            OMNISIM_NO_WINDOW=1 xvfb-run -a --server-args="-screen 0 1280x1024x24" \
+              python -m omnisim harness --port 6789 \
+              > "$RUNNER_TEMP/omnisim-harness-$SC.log" 2>&1 &
+            HPID=$!
+            for i in $(seq 1 72); do
+              if curl -fsS http://127.0.0.1:6789/healthz >/dev/null 2>&1; then break; fi
+              sleep 5
+            done
+            curl -fsS http://127.0.0.1:6789/healthz || echo "HARNESS DID NOT COME UP ($SC)"
+            cd "$GITHUB_WORKSPACE"
+            OMNISIM_DUMP_TREE=1 python3 tests/omnisim_compare.py \
+              --scenario "$SC" --harness-url http://127.0.0.1:6789
+            kill $HPID 2>/dev/null || true
+            sleep 2
           done
-          curl -fsS http://127.0.0.1:6789/healthz || echo "HARNESS DID NOT COME UP"
-          cd "$GITHUB_WORKSPACE"
-          OMNISIM_DUMP_TREE=1 python3 tests/omnisim_compare.py --harness-url http://127.0.0.1:6789
-          kill $HPID 2>/dev/null || true
 
       - name: Upload results and logs
         if: always()
@@ -166,5 +174,5 @@ jobs:
           path: |
             tests/results/**/*.csv
             tests/results/**/*.json
-            ${{ runner.temp }}/omnisim-harness.log
+            ${{ runner.temp }}/omnisim-harness-*.log
           if-no-files-found: warn

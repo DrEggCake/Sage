@@ -42,7 +42,8 @@ SCENARIOS = {
         "world": "tests/omnisim_worlds/cart_pole.omniworld",
         "dt": 0.02,
         "steps": 500,
-        "track": "CART",
+        # joint:CART:cart_force -> slider displacement (matches MuJoCo cart x)
+        "track": "joint:CART:cart_force",
     },
     "ball_drop": {
         "csv": "ball_drop_mujoco.csv",
@@ -164,11 +165,28 @@ def _dump_scene(track, scene):
 
 
 def sample_position(track=None):
-    """Read the tracked body's world position from /scene/tree.
+    """Read the tracked body's kinematic state from the harness.
 
-    track is a DEF name, or "last-solid" for the deepest Solid (arm_reach's
-    DEF-less end effector). Returns None if nothing matches.
+    track forms:
+      - "def:<DEF>"       -> /scene/tree node absolute position
+      - "joint:<DEF>:<J>" -> /robot/<DEF>/joints joint <J> position as the
+                             x component (y=0, z=0.15 for cart_pole)
+      - "last-solid"      -> deepest Solid in /scene/tree (arm_reach ee)
+    Returns [x, y, z] or None.
     """
+    if track and track.startswith("joint:"):
+        _, def_name, joint_name = track.split(":")
+        joints = http_get(f"/robot/{def_name}/joints")
+        if not joints:
+            return None
+        for j in joints.get("joints", []):
+            if j.get("name") == joint_name:
+                pos = j.get("position")
+                if pos is None:
+                    return None
+                return [float(pos), 0.0, 0.15]
+        return None
+
     scene = http_get("/scene/tree")
     if not scene or "nodes" not in scene:
         return None
@@ -181,6 +199,8 @@ def sample_position(track=None):
                 if vals is not None and abs(vals[2]) < 1000.0:
                     return vals
         return None
+    if track and track.startswith("def:"):
+        track = track[4:]
     for node in nodes:
         if node.get("def") == track:
             vals = _position_values(node)

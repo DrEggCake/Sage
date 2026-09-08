@@ -4,27 +4,41 @@ on:
     branches: [master]
   workflow_dispatch: {}
 
+# Mirrors OmniSim's own .github/workflows/linux-build.yml so the OmniSim side
+# follows the exact, proven Ubuntu 24.04 recipe instead of a guessed package
+# list. Critical rules borrowed from it:
+#   * no actions/setup-python (the engine EMBEDS the system Python 3.12)
+#   * drive the bootstrap PHASES (python/deps/wgpu/build/gpu/smoke), not `all`
+#   * OMNISIM_SKIP_TORCH=1 (torch is training-only; a ~2.5 GB CUDA download a
+#     CPU-only runner cannot use)
+#   * OMNISIM_NO_WINDOW=1 for any engine run on a GPU-less runner (software
+#     Vulkan stalling in wgpuDevicePoll otherwise hangs the run)
 jobs:
   cross-sim:
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 150
     env:
       MUJOCO_DIR: ${{ github.workspace }}/.mujoco
     steps:
       - name: Check out Sage
         uses: actions/checkout@v4
+        with:
+          submodules: true
 
-      - name: System packages (Qt/Vulkan/Xvfb that OmniSim's headless run needs)
+      - name: Check the system Python (24.04 must be 3.12)
+        run: |
+          v="$(python3 -c 'import sys;print("%d.%d"%sys.version_info[:2])')"
+          echo "system python3: $v"
+          test "$v" = "3.12" || { echo "FATAL: expected 3.12, got $v"; exit 1; }
+
+      - name: System deps (MuJoCo build tools + Xvfb for the harness)
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            git python3 python3-pip python3-venv build-essential cmake \
-            libgl1 libglib2.0-0 libxrandr2 libxinerama1 libxcursor1 libxi6 \
-            xvfb xauth
-          python3 --version
+            build-essential cmake xvfb xauth libgl1 libglib2.0-0 \
+            libxrandr2 libxinerama1 libxcursor1 libxi6
 
-      # MuJoCo C runtime (CPU path — matches OmniSim's CPU Newton default, so
-      # both simulators run on the same solver family / no GPU).
+      # ---- MuJoCo baseline (fast; uploads even if the long OmniSim build fails) ----
       - name: Install MuJoCo
         run: |
           mkdir -p "$MUJOCO_DIR"
@@ -33,21 +47,17 @@ jobs:
           tar -xzf /tmp/mj.tar.gz -C "$MUJOCO_DIR" --strip-components=1
           ls "$MUJOCO_DIR/lib"
 
-      # Build the Sage cross-sim harness against MuJoCo.
-      - name: Build Sage
+      - name: Build Sage cross-sim harness
         run: |
           cmake -B build -DCMAKE_BUILD_TYPE=Release
           cmake --build build -j$(nproc)
 
-      # The MuJoCo baseline is the ground truth we freeze.
       - name: Run MuJoCo baseline scenarios
         run: |
           LD_LIBRARY_PATH="$MUJOCO_DIR/lib" ./build/cross_sim_test all
 
-      # OmniSim: Ubuntu-24.04 source build (about 25-45 min first time).
-      # Repeated runs benefit from the actions/cache restore below. Bump
-      # OMNI_CACHE_VERSION when you want to force a fresh OmniSim build.
-      - name: Restore OmniSim install cache
+      # ---- OmniSim (Ubuntu-24.04 source build). Cached so repeats are fast. ----
+      - name: Restore OmniSim build cache
         id: omni-cache
         uses: actions/cache@v4
         with:
@@ -55,40 +65,59 @@ jobs:
           key: omnisim-${{ runner.os }}-v1
           restore-keys: omnisim-${{ runner.os }}-
 
-      - name: Clone and build OmniSim
+      - name: Clone OmniSim (incl. glm/stb submodules)
         if: steps.omni-cache.outputs.cache-hit != 'true'
-        run: |
-          git clone --depth 1 https://github.com/omnilink-tech/omnisim.git omnisim
+        run: git clone --recurse-submodules --depth 1 https://github.com/omnilink-tech/omnisim.git omnisim
 
-      - name: Bootstrap OmniSim (build Newton runtime + Qt)
+      - name: Bootstrap OmniSim (python + deps + wgpu + build + gpu)
         if: steps.omni-cache.outputs.cache-hit != 'true'
+        env:
+          OMNISIM_SKIP_TORCH: "1"
         run: |
           cd omnisim
-          bash scripts/install/linux_bootstrap.sh
-          xvfb-run -a python -m omnisim doctor
+          bash scripts/install/linux_bootstrap.sh python
+          bash scripts/install/linux_bootstrap.sh deps
+          bash scripts/install/linux_bootstrap.sh wgpu
+          JOBS=4 bash scripts/install/linux_bootstrap.sh build
+          bash scripts/install/linux_bootstrap.sh gpu
 
-      - name: Verify OmniSim install
+      - name: Verify OmniSim binary + renderer (cache-hit path)
         if: steps.omni-cache.outputs.cache-hit == 'true'
         run: |
           cd omnisim
-          xvfb-run -a python -m omnisim doctor
+          test -f bin/omnisim-bin || { echo "FATAL: no omnisim-bin in cached build"; exit 1; }
+          ldd bin/omnisim-bin | grep -q 'libpython3\.12' \
+            || { echo "FATAL: omnisim-bin does not link libpython3.12"; exit 1; }
 
-      # Start the HTTP harness (default port 6789) and run the comparison.
-      # The .omniworld files authored in tests/omnisim_worlds mirror the MuJoCo
-      # MJCF scenes; if a world fails to load, that IS the recorded setup
-      # assumption (no shared MJCF/.omniworld format) and the run still
-      # artifacts the MuJoCo baseline + comparison log.
-      - name: Run cross-sim comparison (OmniSim)
-        continue-on-error: true
+      # Validate that OUR hand-authored .omniworld mirrors load and run, using
+      # the engine's own headless smoke path (forces Newton).
+      - name: Smoke-test our mirrored worlds (validate .omniworld files)
+        env:
+          OMNISIM_NO_WINDOW: "1"
+          OMNISIM_REQUIRE_NEWTON: "1"
         run: |
           cd omnisim
-          xvfb-run -a python -m omnisim harness --port 6789 > "$RUNNER_TEMP/omnisim-harness.log" 2>&1 &
+          for w in cart_pole ball_drop arm_reach; do
+            echo "=== smoke $w ==="
+            WORLD="$GITHUB_WORKSPACE/tests/omnisim_worlds/$w.omniworld" \
+            bash scripts/install/linux_bootstrap.sh smoke || \
+              echo "SMOKE FAILED for $w (record as setup assumption)"
+          done
+
+      - name: Run cross-sim comparison (OmniSim harness)
+        continue-on-error: true
+        env:
+          OMNISIM_NO_WINDOW: "1"
+        run: |
+          cd omnisim
+          OMNISIM_NO_WINDOW=1 xvfb-run -a python -m omnisim harness --port 6789 \
+            > "$RUNNER_TEMP/omnisim-harness.log" 2>&1 &
           HPID=$!
-          # wait for /healthz
-          for i in $(seq 1 60); do
+          for i in $(seq 1 72); do
             if curl -fsS http://127.0.0.1:6789/healthz >/dev/null 2>&1; then break; fi
             sleep 5
           done
+          curl -fsS http://127.0.0.1:6789/healthz || echo "HARNESS DID NOT COME UP"
           cd "$GITHUB_WORKSPACE"
           python3 tests/omnisim_compare.py --harness-url http://127.0.0.1:6789
           kill $HPID 2>/dev/null || true

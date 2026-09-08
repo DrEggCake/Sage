@@ -103,9 +103,11 @@ jobs:
           echo "=== sndio check ==="
           ls -la /usr/lib/x86_64-linux-gnu/libsndio.so.7 2>/dev/null || echo "libsndio.so.7 MISSING"
           echo "=== xcb platform plugin location ==="
-          ls -la lib/webots/plugins/platforms/ 2>/dev/null || echo "no platforms dir"
+          ls -la lib/webots/qt/plugins/platforms/ 2>/dev/null || echo "no qt/plugins/platforms dir"
           echo "=== ldd on libqxcb.so (missing) ==="
-          ldd lib/webots/plugins/platforms/libqxcb.so 2>/dev/null | grep "not found" || echo "(no missing in libqxcb)"
+          ldd lib/webots/qt/plugins/platforms/libqxcb.so 2>/dev/null | grep "not found" || echo "(no missing in libqxcb)"
+          echo "=== ALL libqxcb-covered dirs ==="
+          find lib -path '*platforms/libqxcb*' 2>/dev/null || echo "(none found anywhere)"
           echo "=== Qt6XcbQpa location ==="
           find lib/webots -name 'libQt6XcbQpa.so*' 2>/dev/null || echo "(no libQt6XcbQpa in lib/webots)"
 

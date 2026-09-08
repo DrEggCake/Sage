@@ -8,9 +8,11 @@
 #   - target sphere at (0.3, 0, 0.35), non-colliding
 #   - timestep 10 ms (MuJoCo dt 0.01)
 #   - deterministic baseline: zero actuation (no-op "empty" controller), so
-#     the arm is released from its initial pose and swings under gravity. No
-#     Motor devices (joints are passive, like MuJoCo ctrl=0); an authored Motor
-#     would position-servo the joints in Webots/Newton and mask the swing.
+#     the arm is released from its initial pose and swings under gravity.
+#     Joints carry effort-capped motors (see cart_pole): tiny maxTorque well
+#     below the gravity torque keeps the chain solved (fully passive joints
+#     freeze under the Newton "mujoco" solver) while staying effectively
+#     unforced -- matching MuJoCo ctrl=0.
 #
 # NOTE (setup assumption): link length/mass are re-expressed per-simulator
 # because there is no shared scene format with MuJoCo's MJCF. The arm's
@@ -77,6 +79,9 @@ DEF ARM Robot {
         minStop -1.5708
         maxStop 1.5708
       }
+      device [
+        RotationalMotor { name "shoulder_motor" maxTorque 0.05 }
+      ]
       endPoint Solid {
         translation 0 0 0.05
         children [
@@ -91,6 +96,9 @@ DEF ARM Robot {
 minStop -1.5708
         maxStop 1.5708
       }
+      device [
+        RotationalMotor { name "elbow_motor" maxTorque 0.02 }
+      ]
       endPoint Solid {
         translation 0 0 0.3
               children [

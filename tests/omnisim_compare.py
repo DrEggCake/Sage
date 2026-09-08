@@ -147,6 +147,22 @@ def _position_values(node):
     return vals
 
 
+def _dump_scene(track, scene):
+    if not os.environ.get("OMNISIM_DUMP_TREE"):
+        return
+    try:
+        Path(f"tests/results/scene_tree_{track}.json").write_text(json.dumps(scene, indent=1))
+        robots = http_get("/robots")
+        if robots:
+            Path(f"tests/results/robots_{track}.json").write_text(json.dumps(robots, indent=1))
+        for defn in ("CART", "ARM"):
+            j = http_get(f"/robot/{defn}/joints")
+            if j:
+                Path(f"tests/results/joints_{defn}.json").write_text(json.dumps(j, indent=1))
+    except OSError:
+        pass
+
+
 def sample_position(track=None):
     """Read the tracked body's world position from /scene/tree.
 
@@ -157,11 +173,7 @@ def sample_position(track=None):
     if not scene or "nodes" not in scene:
         return None
     nodes = scene.get("nodes", [])
-    if os.environ.get("OMNISIM_DUMP_TREE"):
-        try:
-            Path(f"tests/results/scene_tree_{track}.json").write_text(json.dumps(scene, indent=1))
-        except OSError:
-            pass
+    _dump_scene(track, scene)
     if track == "last-solid":
         for node in reversed(nodes):
             if node.get("type") == "Solid" and not node.get("harness_injected"):

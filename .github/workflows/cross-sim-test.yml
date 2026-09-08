@@ -102,6 +102,12 @@ jobs:
           ldd bin/omnisim-bin 2>/dev/null | grep "not found" || echo "(none)"
           echo "=== sndio check ==="
           ls -la /usr/lib/x86_64-linux-gnu/libsndio.so.7 2>/dev/null || echo "libsndio.so.7 MISSING"
+          echo "=== xcb platform plugin location ==="
+          ls -la lib/webots/plugins/platforms/ 2>/dev/null || echo "no platforms dir"
+          echo "=== ldd on libqxcb.so (missing) ==="
+          ldd lib/webots/plugins/platforms/libqxcb.so 2>/dev/null | grep "not found" || echo "(no missing in libqxcb)"
+          echo "=== Qt6XcbQpa location ==="
+          find lib/webots -name 'libQt6XcbQpa.so*' 2>/dev/null || echo "(no libQt6XcbQpa in lib/webots)"
 
       # Validate that OUR hand-authored .omniworld mirrors load and run, using
       # the engine's own headless smoke path (forces Newton).
@@ -130,6 +136,7 @@ jobs:
           export QT_QPA_PLATFORM=xcb
           export WEBOTS_TMPDIR=/tmp
           export LIBGL_ALWAYS_SOFTWARE=1
+          export QT_DEBUG_PLUGINS=1
           OMNISIM_NO_WINDOW=1 xvfb-run -a --server-args="-screen 0 1280x1024x24" \
             python -m omnisim harness --port 6789 \
             > "$RUNNER_TEMP/omnisim-harness.log" 2>&1 &

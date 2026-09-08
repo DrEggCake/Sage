@@ -42,8 +42,10 @@ SCENARIOS = {
         "world": "tests/omnisim_worlds/cart_pole.omniworld",
         "dt": 0.02,
         "steps": 500,
-        # joint:CART:cart_force -> slider displacement (matches MuJoCo cart x)
-        "track": "joint:CART:cart_force",
+        # joint:CART:cart_body -> passive slider displacement (matches MuJoCo
+        # cart x; the cart_pole joints host has no Motor devices, so the joint
+        # is named after its endPoint Solid)
+        "track": "joint:CART:cart_body",
     },
     "ball_drop": {
         "csv": "ball_drop_mujoco.csv",

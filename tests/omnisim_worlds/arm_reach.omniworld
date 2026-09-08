@@ -8,7 +8,9 @@
 #   - target sphere at (0.3, 0, 0.35), non-colliding
 #   - timestep 10 ms (MuJoCo dt 0.01)
 #   - deterministic baseline: zero actuation (no-op "empty" controller), so
-#     the arm is released from its initial pose and swings under gravity.
+#     the arm is released from its initial pose and swings under gravity. No
+#     Motor devices (joints are passive, like MuJoCo ctrl=0); an authored Motor
+#     would position-servo the joints in Webots/Newton and mask the swing.
 #
 # NOTE (setup assumption): link length/mass are re-expressed per-simulator
 # because there is no shared scene format with MuJoCo's MJCF. The arm's
@@ -75,9 +77,6 @@ DEF ARM Robot {
         minStop -1.5708
         maxStop 1.5708
       }
-      device [
-        RotationalMotor { name "shoulder_motor" maxTorque 20 }
-      ]
       endPoint Solid {
         translation 0 0 0.05
         children [
@@ -89,14 +88,11 @@ DEF ARM Robot {
             jointParameters HingeJointParameters {
               axis 0 1 0
               anchor 0 0 0.3
-              minStop -1.5708
-              maxStop 1.5708
-            }
-            device [
-              RotationalMotor { name "elbow_motor" maxTorque 15 }
-            ]
-            endPoint Solid {
-              translation 0 0 0.3
+minStop -1.5708
+        maxStop 1.5708
+      }
+      endPoint Solid {
+        translation 0 0 0.3
               children [
                 Shape {
                   appearance PBRAppearance { baseColor 0.20 0.90 0.40 roughness 0.6 metalness 0.2 }

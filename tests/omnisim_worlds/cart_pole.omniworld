@@ -7,9 +7,11 @@
 #     range +-2.0 m)
 #   - pole hinged about +Y at the cart (MuJoCo "hinge", range +-pi/2)
 #   - gravity -9.81, timestep 20 ms (MuJoCo dt 0.02)
-#   - deterministic baseline: motor present but commanded 0 via the "empty"
-#     (no-op) controller — identical to the MuJoCo harness, which never
-#     applies actuator force. Dynamics are unforced under gravity.
+#   - deterministic baseline: no Motor devices (the joint is passive), so
+#     zero actuation is real in both simulators — matching the MuJoCo harness,
+#     which never applies actuator force. Dynamics are unforced under gravity.
+#     An authored Motor would be a position-servo in Webots/Newton (it would
+#     hold the cart centered and the pole upright, diverging from MuJoCo).
 #
 # RUNNING ON NEWTON + MUJOCO SOLVER for an apples-to-apples comparison against
 # the MuJoCo baseline (same solver family, different host engine).
@@ -64,9 +66,6 @@ DEF CART Robot {
         minStop -2.0
         maxStop 2.0
       }
-      device [
-        LinearMotor { name "cart_force" maxForce 100 }
-      ]
       endPoint Solid {
         children [
           Shape {
@@ -80,9 +79,6 @@ DEF CART Robot {
               minStop -1.5708
               maxStop 1.5708
             }
-            device [
-              RotationalMotor { name "pole_hinge" maxTorque 100 }
-            ]
             endPoint Solid {
               translation 0 0 0
               children [

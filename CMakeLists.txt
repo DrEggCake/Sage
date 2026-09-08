@@ -15,8 +15,12 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(nlohmann_json)
 
-# MuJoCo
-set(MUJOCO_DIR "$ENV{HOME}/.mujoco" CACHE PATH "MuJoCo installation directory")
+# MuJoCo (use MUJOCO_DIR env var if set, else the default ~/.mujoco)
+if(DEFINED ENV{MUJOCO_DIR})
+    set(MUJOCO_DIR "$ENV{MUJOCO_DIR}" CACHE PATH "MuJoCo installation directory")
+else()
+    set(MUJOCO_DIR "$ENV{HOME}/.mujoco" CACHE PATH "MuJoCo installation directory")
+endif()
 find_library(MUJOCO_LIB mujoco HINTS "${MUJOCO_DIR}/lib")
 find_path(MUJOCO_INCLUDE_DIR mujoco/mujoco.h HINTS "${MUJOCO_DIR}/include")
 

@@ -370,6 +370,10 @@ function parseFireLog(text) {
     if (!t) continue;
     if (t.startsWith('#')) {
       if (t.includes('topology')) meta.layerSizes = t.replace('# topology', '').split(',').map(s => parseInt(s, 10));
+      if (t.includes(' hz ')) {
+        const m = t.match(/\bhz\s+([0-9.]+)/);
+        if (m) meta.hz = parseFloat(m[1]);
+      }
       continue;
     }
     if (!header) { header = t.split(','); continue; }
@@ -564,9 +568,11 @@ const rafLoop = now => {
     } else if (state.t > dur) { state.t = dur; pause(); }
     state.t = Math.max(0, Math.min(state.t, dur));
     tick();
-    // SNN ticks advance at 24 ticks/s scaled by speed when the panel is visible.
+    // SNN ticks advance at 24 ticks/s by default, or at the recorded physics
+    // hz (from the fire-log meta) so the network stays synced to the sim.
     if (brain.rows.length && !panels.brain.classList.contains('hidden')) {
-      brain.acc += dtReal * state.speed * 24;
+      const hz = brain.meta.hz || 24;
+      brain.acc += dtReal * state.speed * hz;
       let steps = Math.floor(brain.acc);
       if (steps > 0) { brain.acc -= steps; stepBrain(steps); }
     }

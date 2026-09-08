@@ -76,6 +76,28 @@ if(MUJOCO_LIB AND MUJOCO_INCLUDE_DIR)
         PRIVATE
             "${MUJOCO_DIR}/lib"
     )
+
+    add_executable(snn_drive
+        tests/snn_drive.cpp
+    )
+
+    target_link_libraries(snn_drive
+        PRIVATE
+            sage_core
+            ${MUJOCO_LIB}
+            nlohmann_json::nlohmann_json
+    )
+
+    target_include_directories(snn_drive
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}
+            ${MUJOCO_INCLUDE_DIR}
+    )
+
+    target_link_directories(snn_drive
+        PRIVATE
+            "${MUJOCO_DIR}/lib"
+    )
 else()
     message(WARNING "MuJoCo not found — skipping cross_sim_test build")
 endif()

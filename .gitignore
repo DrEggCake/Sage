@@ -5,5 +5,4 @@ __pycache__/
 *.pyc
 # local deliverable write-ups, kept out of the repo
 docs/*deliverable*
-docs/deliverable_cross_sim*
 

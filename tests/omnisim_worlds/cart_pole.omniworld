@@ -19,7 +19,7 @@
 # RUNNING ON NEWTON + MUJOCO SOLVER for an apples-to-apples comparison against
 # the MuJoCo baseline (same solver family, different host engine).
 #
-# NOTE (first setup assumption, for the reviewer): there is no shared scene format
+# NOTE (first setup assumption): there is no shared scene format
 # between MuJoCo (MJCF) and OmniSim (.omniworld / Webots-style), so the cart,
 # slider damping, and hinge limits are re-expressed per-simulator. Anything
 # here that CI's `run-headless` rejects is a real setup divergence to record.

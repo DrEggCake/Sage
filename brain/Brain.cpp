@@ -258,6 +258,18 @@ std::vector<int> Brain::getWiringLimits() const {
 }
 
 
+std::vector<int> Brain::getFiredFlags() {
+    std::vector<Neuron*> neurons;
+    getAllNeurons(neurons);
+    std::vector<int> flags;
+    flags.reserve(neurons.size());
+    for (const Neuron* n : neurons) {
+        flags.push_back(n->hasFired() ? 1 : 0);
+    }
+    return flags;
+}
+
+
 double Brain::getLearningRate() const { return learningRate; }
 void Brain::setLearningRate(double value) { learningRate = value; }
 

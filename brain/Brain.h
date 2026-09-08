@@ -91,6 +91,8 @@ public:
     std::vector<int> getLayerSizes() const;
     std::vector<int> getWiringLimits() const;
 
+    std::vector<int> getFiredFlags();
+
     std::vector<double> getNeuronThresholds() const;
     std::vector<double> getSynapseStrengths() const;
 

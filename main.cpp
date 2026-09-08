@@ -3,6 +3,7 @@
 #include <random>
 #include <string>
 #include <cmath>
+#include <fstream>
 #include <filesystem>
 
 #include "brain/Brain.h"
@@ -19,6 +20,8 @@ int main(int argc, char** argv) {
     double epsilonEnd = 0.05;
     double learningRate = 0.02;
     unsigned seed = 42;
+    std::string fireLog;
+    std::string saveDir = "data/brain";
 
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
@@ -33,10 +36,13 @@ int main(int argc, char** argv) {
         else if (a == "--epsilon-end" && hasValue) epsilonEnd = parseDouble(argv[++i]);
         else if (a == "--learning-rate" && hasValue) learningRate = parseDouble(argv[++i]);
         else if (a == "--seed" && hasValue) seed = (unsigned)parseDouble(argv[++i]);
+        else if (a == "--fire-log" && hasValue) fireLog = argv[++i];
+        else if (a == "--save-dir" && hasValue) saveDir = argv[++i];
         else if (a == "--help") {
             std::cout << "Usage: sage [--episodes N] [--decision-ticks N]\n"
                       << "            [--epsilon-start E] [--epsilon-end E]\n"
-                      << "            [--learning-rate R] [--seed S]\n";
+                      << "            [--learning-rate R] [--seed S]\n"
+                      << "            [--fire-log FILE] [--save-dir DIR]\n";
             return 0;
         }
     }
@@ -77,6 +83,27 @@ int main(int argc, char** argv) {
     double bestEpisodeReward = -std::numeric_limits<double>::infinity();
     int reportEvery = std::max(1, episodes / 10);
 
+    std::vector<int> topology = brain.getLayerSizes();
+    std::ofstream logger;
+    if (!fireLog.empty()) {
+        auto logPath = std::filesystem::path(fireLog);
+        if (logPath.has_parent_path()) {
+            std::filesystem::create_directories(logPath.parent_path());
+        }
+        logger.open(fireLog);
+        logger << "# topology " << topology[0] << ',' << topology[1] << ','
+               << topology[2] << ',' << topology[3] << ',' << topology[4] << '\n';
+        logger << "# episodes " << episodes << " decisionTicks " << decisionTicks
+               << " seed " << seed << " lr " << learningRate
+               << " epsilonStart " << epsilonStart << " epsilonEnd " << epsilonEnd << '\n';
+        logger << "ep,tick";
+        for (int i = 0; i < topology[0]; i++) logger << ",i" << i;
+        int totalNeurons = 0;
+        for (int s : topology) totalNeurons += s;
+        for (int i = 0; i < totalNeurons; i++) logger << ",f" << i;
+        logger << '\n';
+    }
+
     for (int ep = 0; ep < episodes; ep++) {
 
         double eps = epsilonEnd;
@@ -88,12 +115,21 @@ int main(int argc, char** argv) {
         brain.reset();
         brain.resetOutputs();
 
-        for (int i = 0; i < 8; i++) {
-            brain.setInput(i, dist(rng) * 2.0);
+        std::vector<double> inputs(topology[0]);
+        for (int i = 0; i < topology[0]; i++) {
+            double v = dist(rng) * 2.0;
+            inputs[i] = v;
+            brain.setInput(i, v);
         }
 
         for (int t = 0; t < decisionTicks; t++) {
             brain.tick();
+            if (logger.is_open()) {
+                logger << ep << ',' << t;
+                for (double v : inputs) logger << ',' << v;
+                for (int f : brain.getFiredFlags()) logger << ',' << f;
+                logger << '\n';
+            }
         }
 
         int best = 0;
@@ -134,10 +170,32 @@ int main(int argc, char** argv) {
     brain.setTotalReward(totalRewardAcc);
     brain.setBestReward(bestEpisodeReward);
 
-    std::filesystem::create_directories("data/brain");
-    auto file = BrainSave::save(brain, "data/brain");
+    std::filesystem::create_directories(saveDir);
+    auto file = BrainSave::save(brain, saveDir);
 
     std::cout << "Saved brain to " << file << "\n";
+
+    if (!fireLog.empty()) {
+        std::string metaPath = fireLog + ".meta.json";
+        std::ofstream meta(metaPath);
+        meta << "{\n"
+             << "  \"brain\": \"" << file.filename().string() << "\",\n"
+             << "  \"layerSizes\": [" << topology[0] << ',' << topology[1] << ','
+             << topology[2] << ',' << topology[3] << ',' << topology[4] << "],\n"
+             << "  \"wiringLimits\": [" << brain.getWiringLimits()[0] << ',' << brain.getWiringLimits()[1]
+             << ',' << brain.getWiringLimits()[2] << ',' << brain.getWiringLimits()[3] << "],\n"
+             << "  \"episodes\": " << episodes << ",\n"
+             << "  \"decisionTicks\": " << decisionTicks << ",\n"
+             << "  \"seed\": " << seed << ",\n"
+             << "  \"learningRate\": " << learningRate << ",\n"
+             << "  \"epsilonStart\": " << epsilonStart << ",\n"
+             << "  \"epsilonEnd\": " << epsilonEnd << ",\n"
+             << "  \"successes\": " << successes << ",\n"
+             << "  \"totalReward\": " << totalRewardAcc << ",\n"
+             << "  \"episodesTrained\": " << episodes << "\n"
+             << "}\n";
+        std::cout << "Fire log: " << fireLog << " (+ sidecar " << metaPath << ")\n";
+    }
 
     auto loaded = BrainSave::load(file);
     std::cout << "Loaded brain back with "

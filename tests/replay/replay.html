@@ -42,6 +42,13 @@
   .hl-m { color: var(--mujoco); } .hl-o { color: var(--omnisim); }
   .dim { color: var(--dim); }
   #timeline { flex: 1; min-width: 160px; }
+  #net-svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  #net-svg circle.fire { filter: drop-shadow(0 0 5px rgba(57,217,138,.95)); }
+  #net-svg text { fill: var(--dim); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+  #net-bar { position: absolute; left: 8px; right: 8px; bottom: 8px; display: flex; align-items: center; gap: 8px;
+             padding: 6px 8px; background: rgba(13,17,23,.85); border: 1px solid var(--line); border-radius: 6px; z-index: 6; }
+  #net-bar select { max-width: 220px; }
+  #net-status { margin-left: auto; font-size: 11px; color: var(--dim); white-space: nowrap; }
   .error-banner { position: absolute; inset: 0; display: none; place-items: center;
          z-index: 20; background: rgba(13,17,23,.85); font-size: 14px; color: #ff7b72;
          padding: 24px; text-align: center; }
@@ -66,12 +73,26 @@
     <button id="btn-next" title=". / &rarr;">frame &gt;</button>
     <button id="btn-loop" title="L">Loop</button>
     <button id="btn-camera" title="R">Reset camera</button>
+    <button id="btn-net" title="Toggle SNN network panel">SNN</button>
     <button id="btn-full" title="F">Fullscreen</button>
   </div>
 
   <div id="views">
     <div id="view-mujoco" class="view"><div class="tag hl-m">MuJoCo</div></div>
     <div id="view-omnisim" class="view"><div class="tag hl-o">OmniSim</div></div>
+    <div id="view-brain" class="view hidden">
+      <div class="tag">SNN network</div>
+      <svg id="net-svg"></svg>
+      <div id="net-bar">
+        <select id="firelog" title="SNN fire log (from: sage --fire-log FILE)"></select>
+        <select id="brain" title="paired brain JSON"></select>
+        <button id="btn-bplay" title="play / pause brain (space)">Play</button>
+        <button id="btn-bprev" title="previous tick">-</button>
+        <button id="btn-bnext" title="next tick">+</button>
+        <button id="btn-bloop" title="loop brain playback">Loop</button>
+        <span id="net-status">no fire log selected</span>
+      </div>
+    </div>
     <div id="no-data">No recordings found for this scenario.</div>
   </div>
 </div>
@@ -102,6 +123,16 @@ const state = {
   disabled: { mujoco: false, omnisim: false },
   lastTs: performance.now(),
   frameCount: 0, fps: 0,
+};
+
+// SNN network panel (fire-log + paired brain)
+const brain = {
+  log: null,           // manifest entry
+  meta: {},            // sidecar json (or parsed from CSV header)
+  rows: [],            // {ep, tick, inputs[], fired[]}
+  idx: 0, acc: 0, loop: true,
+  nodes: [],           // [g] -> {circle, layer}
+  netMeta: { topo: null, wiring: null, strengths: null },
 };
 
 const scenes = {};
@@ -143,6 +174,7 @@ SELS.forEach(eng => {
   scenes[eng] = scene; views[eng] = { scene, cam, controls, renderer };
   panels[eng] = div;
 });
+panels.brain = document.getElementById('view-brain');
 
 function resize() {
   SELS.forEach(eng => {
@@ -328,12 +360,175 @@ function nearestKeyframe(t) {
   return Math.max(0, k);
 }
 
+/* ---------------- SNN network panel ---------------- */
+function parseFireLog(text) {
+  const meta = {};
+  const rows = [];
+  let header = null;
+  for (const ln of text.split(/\r?\n/)) {
+    const t = ln.trim();
+    if (!t) continue;
+    if (t.startsWith('#')) {
+      if (t.includes('topology')) meta.layerSizes = t.replace('# topology', '').split(',').map(s => parseInt(s, 10));
+      continue;
+    }
+    if (!header) { header = t.split(','); continue; }
+    const c = t.split(',');
+    const fIdx = header.findIndex(h => h.startsWith('f'));
+    const inCount = fIdx - 2;
+    if (c.length < fIdx) continue;
+    rows.push({ ep: parseInt(c[0], 10), tick: parseInt(c[1], 10),
+      inputs: c.slice(2, 2 + inCount).map(Number),
+      fired: c.slice(fIdx).map(Number) });
+  }
+  return { meta, rows };
+}
+
+function slidingWiring(topo, limits, strengths) {
+  const pre = [];
+  let acc = 0;
+  for (const n of topo) { pre.push(acc); acc += n; }
+  const edges = [];
+  let si = 0;
+  for (let l = 0; l < topo.length - 1; l++) {
+    const N1 = topo[l], N2 = topo[l + 1], K = Math.min(limits && limits[l] || 0, N2);
+    if (K <= 0 || N1 <= 0) continue;
+    for (let i = 0; i < N1; i++) {
+      const start = N1 <= 1 ? 0 : Math.floor(i * (N2 - K) / (N1 - 1));
+      for (let j = 0; j < K; j++) {
+        const s = strengths && si < strengths.length ? strengths[si] : 0;
+        edges.push({ from: pre[l] + i, to: pre[l + 1] + start + j, s });
+        si++;
+      }
+    }
+  }
+  return edges;
+}
+
+function buildNet() {
+  const topo = brain.netMeta.topo || brain.meta.layerSizes;
+  if (!topo) return;
+  const wiring = brain.netMeta.wiring;
+  const strengths = brain.netMeta.strengths;
+  const svg = $('net-svg');
+  svg.innerHTML = '';
+  const W = 1100, H = 460, padL = 70, padR = 90, cols = topo.length;
+  const xFor = l => cols <= 1 ? W / 2 : padL + (W - padL - padR) * l / (cols - 1);
+  const yFor = (l, j) => { const n = topo[l]; return n <= 1 ? H / 2 : H * (j + 1) / (n + 1); };
+  const NS = 'http://www.w3.org/2000/svg';
+  const line = (el, attrs) => { for (const k in attrs) el.setAttribute(k, attrs[k]); };
+  if (wiring) {
+    for (const e of slidingWiring(topo, wiring, strengths)) {
+      const l1 = edgeLayerOf(topo, e.from), l2 = edgeLayerOf(topo, e.to);
+      const j1 = e.from - layerStart(topo, l1), j2 = e.to - layerStart(topo, l2);
+      const g = document.createElementNS(NS, 'line');
+      line(g, { x1: xFor(l1), y1: yFor(l1, j1), x2: xFor(l2), y2: yFor(l2, j2),
+        stroke: '#8b949e', 'stroke-width': 1,
+        'stroke-opacity': strengths && strengths.length ? Math.min(0.85, Math.max(0.1, Math.abs(e.s))) : 0.08 });
+      svg.appendChild(g);
+    }
+  }
+  brain.nodes = [];
+  let gIdx = 0;
+  for (let l = 0; l < cols; l++) {
+    for (let j = 0; j < topo[l]; j++) {
+      const c = document.createElementNS(NS, 'circle');
+      line(c, { cx: xFor(l), cy: yFor(l, j), r: 9, fill: '#1c2128', stroke: '#30363d', 'stroke-width': 1 });
+      svg.appendChild(c);
+      brain.nodes[gIdx++] = { circle: c, layer: l };
+    }
+    const lab = document.createElementNS(NS, 'text');
+    lab.setAttribute('x', xFor(l)); lab.setAttribute('y', 16);
+    lab.textContent = (['input', 'layer 1', 'layer 2', 'layer 3', 'output'][l] || ('layer ' + l)) + ' — ' + topo[l];
+    svg.appendChild(lab);
+  }
+}
+
+function layerStart(topo, l) { let s = 0; for (let i = 0; i < l; i++) s += topo[i]; return s; }
+function edgeLayerOf(topo, g) { let s = 0; for (let l = 0; l < topo.length; l++) { s += topo[l]; if (g < s) return l; } return topo.length - 1; }
+
+function renderNetRow() {
+  const row = brain.rows[brain.idx];
+  const topo = brain.netMeta.topo || brain.meta.layerSizes;
+  if (!row || !topo || !brain.nodes.length) return;
+  const inCount = topo[0];
+  const svg = $('net-svg');
+  const NS = 'http://www.w3.org/2000/svg';
+  for (let g = 0; g < brain.nodes.length; g++) {
+    const cell = brain.nodes[g];
+    if (g < inCount) {
+      const v = (row.inputs[g] + 2) / 4;
+      cell.circle.setAttribute('fill', `rgba(88,166,255,${Math.max(0.06, Math.min(1, v))})`);
+      cell.circle.classList.remove('fire');
+    } else {
+      cell.circle.setAttribute('fill', row.fired[g] ? '#39d98a' : '#1c2128');
+      cell.circle.classList.toggle('fire', !!row.fired[g]);
+    }
+  }
+  let firedN = 0;
+  for (const f of row.fired) firedN += f;
+  const dur = brain.meta.decisionTicks || (brain.rows.length ? Math.max(1, brain.rows[0].tick + 1) : 1);
+  const eps = brain.meta.episodes;
+  $('net-status').textContent =
+    `ep ${row.ep}${eps ? '/' + eps : ''} · tick ${row.tick + 1}/${dur} · row ${brain.idx + 1}/${brain.rows.length} · fired ${firedN}/${row.fired.length}` +
+    `${brain.log?.meta?.brain ? ' · brain ' + brain.log.meta.brain : ''}`;
+}
+
+function stepBrain(d) {
+  const b = brain;
+  if (!b.rows.length) return;
+  const N = b.rows.length;
+  let ni = b.idx + d;
+  if (b.loop) ni = ((ni % N) + N) % N;
+  else ni = Math.max(0, Math.min(ni, N - 1));
+  b.idx = ni;
+  renderNetRow();
+}
+
+async function loadBrainNet(id) {
+  const entry = (state.manifest.brains || []).find(e => e.id === id);
+  if (!entry) { brain.netMeta.wiring = brain.meta.wiringLimits || null; brain.netMeta.strengths = null; buildNet(); return; }
+  try {
+    const res = await fetch(entry.file);
+    const data = await res.json();
+    brain.netMeta.wiring = data.wiringLimits || null;
+    brain.netMeta.strengths = data.synapseStrengths || null;
+    brain.netMeta.topo = data.layerSizes || brain.meta.layerSizes;
+  } catch (e) { console.error('[replay] brain load failed', e.message); brain.netMeta.wiring = null; brain.netMeta.strengths = null; }
+  buildNet();
+  renderNetRow();
+}
+
+async function loadFireLog(id) {
+  const entry = (state.manifest.firelogs || []).find(e => e.id === id);
+  if (!entry) { $('net-status').textContent = 'no fire log'; brain.rows = []; return; }
+  $('net-status').textContent = 'loading…';
+  try {
+    const res = await fetch(entry.file);
+    const parsed = parseFireLog(await res.text());
+    brain.log = entry;
+    brain.meta = Object.assign(parsed.meta, entry.meta || {});
+    brain.rows = parsed.rows;
+    brain.idx = 0; brain.acc = 0;
+    if (brain.meta.brain) {
+      const sel = $('brain');
+      if ([...sel.options].some(o => o.value === brain.meta.brain)) sel.value = brain.meta.brain;
+    }
+    await loadBrainNet(brain.meta.brain);
+    renderNetRow();
+    $('net-status').textContent = `loaded ${brain.rows.length} ticks`;
+  } catch (e) {
+    $('net-status').textContent = 'failed: ' + e.message;
+  }
+}
+
 /* ---------------- playback ---------------- */
 function frameStep(dtKey) {
   const i = nearestKeyframe(state.t);
   const next = Math.min(Math.max(i + (dtKey > 0 ? 1 : -1), 0), state.keyframes.length - 1);
   state.t = state.keyframes[next];
   if (!state.playing) tick();
+  if (!panels.brain.classList.contains('hidden') && brain.rows.length) stepBrain(dtKey);
 }
 
 function tick() {
@@ -344,8 +539,11 @@ function tick() {
 }
 
 function play() {
-  if (!state.keyframes.length) return;
-  if (state.t >= state.keyframes[state.keyframes.length - 1]) state.t = 0;
+  const hasPos = state.keyframes.length > 0;
+  const hasBrain = brain.rows.length > 0;
+  if (!hasPos && !hasBrain) return;
+  if (hasPos && state.t >= state.keyframes[state.keyframes.length - 1]) state.t = 0;
+  if (hasBrain && brain.idx >= brain.rows.length - 1) brain.idx = 0;
   state.playing = true; $('btn-play').textContent = 'Pause';
 }
 
@@ -366,6 +564,12 @@ const rafLoop = now => {
     } else if (state.t > dur) { state.t = dur; pause(); }
     state.t = Math.max(0, Math.min(state.t, dur));
     tick();
+    // SNN ticks advance at 24 ticks/s scaled by speed when the panel is visible.
+    if (brain.rows.length && !panels.brain.classList.contains('hidden')) {
+      brain.acc += dtReal * state.speed * 24;
+      let steps = Math.floor(brain.acc);
+      if (steps > 0) { brain.acc -= steps; stepBrain(steps); }
+    }
   }
   SELS.forEach(eng => {
     const v = views[eng];
@@ -443,11 +647,24 @@ function resetAllCameras() {
 /* ---------------- UI wiring ---------------- */
 async function init() {
   $('btn-loop').classList.toggle('active', state.loop);
+  $('btn-bloop').classList.toggle('active', brain.loop);
   $('btn-play').onclick = () => state.playing ? pause() : play();
   $('btn-loop').onclick = () => { state.loop = !state.loop; $('btn-loop').classList.toggle('active', state.loop); };
   $('btn-prev').onclick = () => frameStep(-1);
   $('btn-next').onclick = () => frameStep(1);
   $('btn-camera').onclick = resetAllCameras;
+  $('btn-net').onclick = () => {
+    const show = panels.brain.classList.contains('hidden');
+    panels.brain.classList.toggle('hidden', !show);
+    $('btn-net').classList.toggle('active', show);
+    layout();
+  };
+  $('btn-bplay').onclick = () => state.playing ? pause() : play();
+  $('btn-bprev').onclick = () => stepBrain(-1);
+  $('btn-bnext').onclick = () => stepBrain(1);
+  $('btn-bloop').onclick = () => { brain.loop = !brain.loop; $('btn-bloop').classList.toggle('active', brain.loop); };
+  $('firelog').onchange = () => $('firelog').value ? loadFireLog($('firelog').value) : null;
+  $('brain').onchange = () => $('brain').value ? loadBrainNet($('brain').value) : null;
   $('btn-full').onclick = () => { if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen(); };
   $('speed').oninput = () => { state.speed = parseFloat($('speed').value); $('speed-val').textContent = state.speed.toFixed(1) + 'x'; };
   $('scenario').onchange = () => { state.scenario = $('scenario').value; loadScenario(state.scenario); };
@@ -477,24 +694,48 @@ async function init() {
     if (manifest.error) throw new Error(manifest.error);
     state.manifest = manifest;
     const scen = [...new Set(manifest.recordings.map(r => r.scenario))].sort();
-    if (!scen.length) throw new Error('no *_mujoco.csv / *_omnisim.csv recordings in the results dir');
-    state.showEng = { mujoco: true, omnisim: true };
-    scen.forEach(s => { const o = document.createElement('option'); o.value = s; o.textContent = s; $('scenario').appendChild(o); });
-    $('scenario').value = scen[0];
-    state.scenario = scen[0];
-    $('timeline').max = 1;
-    await loadScenario(scen[0]);
+    const flSel = $('firelog'), brSel = $('brain');
+    (manifest.firelogs || []).forEach(f => {
+      const o = document.createElement('option');
+      o.value = f.id;
+      o.textContent = f.id + (f.meta && f.meta.episodes ? ` · ${f.meta.episodes} eps` : '');
+      flSel.appendChild(o);
+    });
+    (manifest.brains || []).forEach(b => {
+      const o = document.createElement('option');
+      o.value = b.id;
+      o.textContent = b.id + (b.episodesTrained ? ` · ${b.episodesTrained} eps` : '');
+      brSel.appendChild(o);
+    });
+    if (scen.length) {
+      state.showEng = { mujoco: true, omnisim: true };
+      scen.forEach(s => { const o = document.createElement('option'); o.value = s; o.textContent = s; $('scenario').appendChild(o); });
+      $('scenario').value = scen[0];
+      state.scenario = scen[0];
+      $('timeline').max = 1;
+      await loadScenario(scen[0]);
+    } else if (!flSel.options.length) {
+      throw new Error('no *_mujoco.csv / *_omnisim.csv recordings or SNN fire logs in the results dir');
+    } else {
+      $('no-data').style.display = 'grid';
+      $('no-data').textContent = 'Only SNN fire logs available — open the SNN panel.';
+    }
+    if (flSel.options.length) {
+      flSel.selectedIndex = 0;
+      await loadFireLog(flSel.value);
+    }
   } catch (e) {
     const b = $('err'); b.style.display = 'grid'; b.textContent = 'Replay failed: ' + e.message;
   }
 }
 
 function layout() {
-  // if only one engine shown, let it fill the strip; two keep 50/50
+  // visible views share the strip; hidden ones collapse
   const vis = e => !panels[e].classList.contains('hidden');
-  const anyM = vis('mujoco'), anyO = vis('omnisim');
-  panels.mujoco.style.flex = anyO ? '1 1 0' : '1 1 100%';
-  panels.omnisim.style.flex = anyM ? '1 1 0' : '1 1 100%';
+  const shown = SELS.concat(['brain']).filter(vis);
+  if (shown.length) {
+    shown.forEach(e => { panels[e].style.flex = `1 1 ${100 / shown.length}%`; });
+  }
   resize();
 }
 

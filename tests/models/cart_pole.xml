@@ -1,0 +1,36 @@
+<mujoco model="cart_pole">
+  <compiler angle="radian"/>
+  <option timestep="0.02" gravity="0 0 -9.81"/>
+
+  <default>
+    <joint armature="0.1" damping="0.5"/>
+    <geom mass="1.0"/>
+  </default>
+
+  <worldbody>
+    <geom name="floor" type="plane" size="5 5 0.1" rgba="0.8 0.8 0.8 1"/>
+
+    <body name="cart" pos="0 0 0.15">
+      <inertial mass="1.0" pos="0 0 0" diaginertia="0.1 0.1 0.1"/>
+      <geom type="box" size="0.2 0.1 0.05" rgba="0.2 0.6 0.9 1"/>
+      <joint name="slider" type="slide" axis="1 0 0" limited="true" range="-2.0 2.0"/>
+
+      <body name="pole" pos="0 0 0">
+        <inertial mass="0.1" pos="0 0 0.25" diaginertia="0.001 0.001 0.0001"/>
+        <geom type="cylinder" size="0.025 0.25" rgba="0.9 0.3 0.2 1"/>
+        <joint name="hinge" type="hinge" axis="0 1 0" limited="true" range="-1.5708 1.5708"/>
+      </body>
+    </body>
+  </worldbody>
+
+  <actuator>
+    <motor name="cart_force" joint="slider" gear="10"/>
+  </actuator>
+
+  <sensor>
+    <jointpos name="cart_pos" joint="slider"/>
+    <jointpos name="pole_angle" joint="hinge"/>
+    <jointvel name="cart_vel" joint="slider"/>
+    <jointvel name="pole_vel" joint="hinge"/>
+  </sensor>
+</mujoco>

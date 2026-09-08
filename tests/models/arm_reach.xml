@@ -1,0 +1,53 @@
+<mujoco model="arm_reach">
+  <compiler angle="radian"/>
+  <option timestep="0.01" gravity="0 0 -9.81"/>
+
+  <default>
+    <joint armature="0.1" damping="2.0"/>
+    <geom mass="0.5"/>
+  </default>
+
+  <worldbody>
+    <geom name="floor" type="plane" size="3 3 0.1" rgba="0.8 0.8 0.8 1"/>
+
+    <body name="base" pos="0 0 0.05">
+      <inertial mass="2.0" pos="0 0 0" diaginertia="0.1 0.1 0.1"/>
+      <geom type="cylinder" size="0.08 0.05" rgba="0.3 0.3 0.3 1"/>
+
+      <body name="link1" pos="0 0 0.05">
+        <inertial mass="0.5" pos="0 0 0.15" diaginertia="0.01 0.01 0.001"/>
+        <geom type="capsule" size="0.03 0.15" rgba="0.2 0.6 0.9 1"/>
+        <joint name="shoulder" type="hinge" axis="0 1 0" limited="true" range="-1.5708 1.5708"/>
+
+        <body name="link2" pos="0 0 0.3">
+          <inertial mass="0.3" pos="0 0 0.1" diaginertia="0.005 0.005 0.0005"/>
+          <geom type="capsule" size="0.025 0.1" rgba="0.2 0.9 0.4 1"/>
+          <joint name="elbow" type="hinge" axis="0 1 0" limited="true" range="-1.5708 1.5708"/>
+
+          <body name="ee" pos="0 0 0.2">
+            <inertial mass="0.1" pos="0 0 0" diaginertia="0.001 0.001 0.001"/>
+            <geom type="sphere" size="0.02" rgba="0.9 0.2 0.2 1" contype="0" conaffinity="0"/>
+            <site name="ee_site" pos="0 0 0" type="sphere" size="0.01"/>
+          </body>
+        </body>
+      </body>
+    </body>
+
+    <body name="target" pos="0.3 0 0.35">
+      <geom type="sphere" size="0.03" rgba="0.9 0.9 0.1 0.5" contype="0" conaffinity="0"/>
+      <site name="target_site" pos="0 0 0" type="sphere" size="0.01"/>
+    </body>
+  </worldbody>
+
+  <actuator>
+    <motor name="shoulder_motor" joint="shoulder" gear="20"/>
+    <motor name="elbow_motor" joint="elbow" gear="15"/>
+  </actuator>
+
+  <sensor>
+    <jointpos name="shoulder_pos" joint="shoulder"/>
+    <jointpos name="elbow_pos" joint="elbow"/>
+    <framepos name="ee_pos" objtype="site" objname="ee_site"/>
+    <framepos name="target_pos" objtype="site" objname="target_site"/>
+  </sensor>
+</mujoco>

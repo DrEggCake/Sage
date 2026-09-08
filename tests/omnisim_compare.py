@@ -133,8 +133,15 @@ def sample_position():
     if scene and "nodes" in scene:
         for node in scene.get("nodes", []):
             pos = node.get("position")
-            if pos is not None:
-                return [float(p) for p in pos[:3]]
+            if not pos:
+                continue
+            try:
+                vals = [float(p) for p in pos[:3]]
+            except (TypeError, ValueError):
+                continue
+            if any(v is None for v in vals) or all(v == 0.0 for v in vals) and len(vals) == 3:
+                continue
+            return vals
     return None
 
 

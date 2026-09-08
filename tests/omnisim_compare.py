@@ -32,25 +32,30 @@ from pathlib import Path
 
 HARNESS_URL = "http://127.0.0.1:6789"
 
-# scenario -> (mujoco CSV, omnisim world, dt_s, steps)
+# scenario -> (mujoco CSV, omnisim world, dt_s, steps, tracking rule)
+# tracking: a `def` parsed from the scene tree, or "last-solid" (deepest Solid
+# in DFS order -- used for arm_reach, whose moving links are DEF-less).
 SCENARIOS = {
     "cart_pole": {
         "csv": "cart_pole_mujoco.csv",
         "world": "tests/omnisim_worlds/cart_pole.omniworld",
         "dt": 0.02,
         "steps": 500,
+        "track": "CART",
     },
     "ball_drop": {
         "csv": "ball_drop_mujoco.csv",
         "world": "tests/omnisim_worlds/ball_drop.omniworld",
         "dt": 0.005,
         "steps": 2000,
+        "track": "BALL",
     },
     "arm_reach": {
         "csv": "arm_reach_mujoco.csv",
         "world": "tests/omnisim_worlds/arm_reach.omniworld",
         "dt": 0.01,
         "steps": 1000,
+        "track": "last-solid",
     },
 }
 
@@ -127,21 +132,42 @@ def load_world(path):
     return False
 
 
-def sample_position():
-    """Read the first dynamic body's world position from /scene/tree."""
+def _position_values(node):
+    """Return [x,y,z] floats, or None if the node has no usable position."""
+    pos = node.get("position")
+    if not pos or node.get("harness_injected"):
+        return None
+    try:
+        vals = [float(p) for p in pos[:3]]
+    except (TypeError, ValueError):
+        return None
+    if any(v is None for v in vals):
+        return None
+    return vals
+
+
+def sample_position(track=None):
+    """Read the tracked body's world position from /scene/tree.
+
+    track is a DEF name, or "last-solid" for the deepest Solid (arm_reach's
+    DEF-less end effector). Returns None if nothing matches.
+    """
     scene = http_get("/scene/tree")
-    if scene and "nodes" in scene:
-        for node in scene.get("nodes", []):
-            pos = node.get("position")
-            if not pos:
-                continue
-            try:
-                vals = [float(p) for p in pos[:3]]
-            except (TypeError, ValueError):
-                continue
-            if any(v is None for v in vals) or all(v == 0.0 for v in vals) and len(vals) == 3:
-                continue
-            return vals
+    if not scene or "nodes" not in scene:
+        return None
+    nodes = scene.get("nodes", [])
+    if track == "last-solid":
+        for node in reversed(nodes):
+            if node.get("type") == "Solid" and not node.get("harness_injected"):
+                vals = _position_values(node)
+                if vals is not None and abs(vals[2]) < 1000.0:
+                    return vals
+        return None
+    for node in nodes:
+        if node.get("def") == track:
+            vals = _position_values(node)
+            if vals is not None:
+                return vals
     return None
 
 
@@ -168,7 +194,7 @@ def run_omnisim_scenario(name, cfg):
             break
         done += n
 
-        pos = sample_position()
+        pos = sample_position(cfg.get("track"))
         if pos is None:
             print("  Could not read position from /scene/tree; stopping scenario")
             break

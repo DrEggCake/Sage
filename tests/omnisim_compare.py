@@ -109,15 +109,16 @@ def check_harness():
 
 def load_world(path):
     abs_path = str(Path(path).resolve())
-    # with_supervisor=false: the harness then passes --no-rendering, which
-    # avoids initializing the Qt xcb GUI -- required on a GPU-less runner
-    # (omnisim-bin otherwise aborts init'ing the xcb platform plugin, which
-    # is exactly what the QT_PLATFORM_PLUGIN_FAILED diagnostic reports).
-    # /scene/tree still answers positions headless.
+    # with_supervisor=true (the default): the harness writes a .harness_*.wbt
+    # sibling that injects a Supervisor robot, whose TCP socket drives /scene/tree
+    # and /sim/step. It skips --no-rendering, but OMNISIM_NO_WINDOW=1 skips the
+    # GUI anyway; the Qt xcb plugin is now satisfied on the runner (full libxcb
+    # base set installed). Without the supervisor the read endpoints 503
+    # (SUPERVISOR_UNAVAILABLE).
     result = http_post("/world/load", {
         "path": abs_path,
         "wait_s": 10.0,
-        "with_supervisor": False,
+        "with_supervisor": True,
     })
     if result and result.get("ok"):
         print(f"  World loaded: {result.get('world')} (load_ms={result.get('load_ms')})")

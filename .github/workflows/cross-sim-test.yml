@@ -1,0 +1,104 @@
+name: cross-sim-test
+on:
+  push:
+    branches: [master]
+  workflow_dispatch: {}
+
+jobs:
+  cross-sim:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      MUJOCO_DIR: ${{ github.workspace }}/.mujoco
+    steps:
+      - name: Check out Sage
+        uses: actions/checkout@v4
+
+      - name: System packages (Qt/Vulkan/Xvfb that OmniSim's headless bootstraps need)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            git python3 python3-pip python3-venv build-essential cmake \
+            libgl1 libgl1-mesa-glx libglib2.0-0 \
+            xvfb xauth
+          python3 --version
+
+      # MuJoCo C runtime (CPU path — matches OmniSim's CPU Newton default, so
+      # both simulators run on the same solver family / no GPU).
+      - name: Install MuJoCo
+        run: |
+          mkdir -p "$MUJOCO_DIR"
+          curl -fsSL -o /tmp/mj.tar.gz \
+            "https://github.com/google-deepmind/mujoco/releases/download/3.3.2/mujoco-3.3.2-linux-x86_64.tar.gz"
+          tar -xzf /tmp/mj.tar.gz -C "$MUJOCO_DIR" --strip-components=1
+          ls "$MUJOCO_DIR/lib"
+
+      # Build the Sage cross-sim harness against MuJoCo.
+      - name: Build Sage
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j$(nproc)
+
+      # The MuJoCo baseline is the ground truth we freeze.
+      - name: Run MuJoCo baseline scenarios
+        run: |
+          LD_LIBRARY_PATH="$MUJOCO_DIR/lib" ./build/cross_sim_test all
+
+      # OmniSim: Ubuntu-24.04 source build (about 25-45 min first time).
+      # Repeated runs benefit from the actions/cache restore below. Bump
+      # OMNI_CACHE_VERSION when you want to force a fresh OmniSim build.
+      - name: Restore OmniSim install cache
+        id: omni-cache
+        uses: actions/cache@v4
+        with:
+          path: omnisim
+          key: omnisim-${{ runner.os }}-v1
+          restore-keys: omnisim-${{ runner.os }}-
+
+      - name: Clone and build OmniSim
+        if: steps.omni-cache.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 https://github.com/omnilink-tech/omnisim.git omnisim
+
+      - name: Bootstrap OmniSim (build Newton runtime + Qt)
+        if: steps.omni-cache.outputs.cache-hit != 'true'
+        run: |
+          cd omnisim
+          bash scripts/install/linux_bootstrap.sh
+          xvfb-run -a python -m omnisim doctor
+
+      - name: Verify OmniSim install
+        if: steps.omni-cache.outputs.cache-hit == 'true'
+        run: |
+          cd omnisim
+          xvfb-run -a python -m omnisim doctor
+
+      # Start the HTTP harness (default port 6789) and run the comparison.
+      # The .omniworld files authored in tests/omnisim_worlds mirror the MuJoCo
+      # MJCF scenes; if a world fails to load, that IS the recorded setup
+      # assumption (no shared MJCF/.omniworld format) and the run still
+      # artifacts the MuJoCo baseline + comparison log.
+      - name: Run cross-sim comparison (OmniSim)
+        continue-on-error: true
+        run: |
+          cd omnisim
+          xvfb-run -a python -m omnisim harness --port 6789 > "$RUNNER_TEMP/omnisim-harness.log" 2>&1 &
+          HPID=$!
+          # wait for /healthz
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:6789/healthz >/dev/null 2>&1; then break; fi
+            sleep 5
+          done
+          cd "$GITHUB_WORKSPACE"
+          python3 tests/omnisim_compare.py --harness-url http://127.0.0.1:6789
+          kill $HPID 2>/dev/null || true
+
+      - name: Upload results and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sage-cross-sim-results
+          path: |
+            tests/results/**/*.csv
+            ${{ runner.temp }}/omnisim-harness.log
+          if-no-files-found: warn

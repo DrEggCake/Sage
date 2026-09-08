@@ -131,6 +131,14 @@ def load_world(path):
     })
     if result and result.get("ok"):
         print(f"  World loaded: {result.get('world')} (load_ms={result.get('load_ms')})")
+        # The load's settle wait lets the engine run ahead of the first sample
+        # (e.g. the ball already rests). Rewind to authored state so the
+        # comparison covers the full trajectory.
+        reset = http_post("/sim/reset", {"restore": True})
+        if reset and reset.get("ok"):
+            print(f"  /sim/reset -> t={reset.get('sim_time_ms', '?')}ms")
+        else:
+            print(f"  /sim/reset skipped: {reset}")
         return True
     print(f"  Load failed: {result}")
     return False

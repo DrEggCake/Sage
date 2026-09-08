@@ -64,6 +64,14 @@ def http_post(path, data=None):
     try:
         with urllib.request.urlopen(req, timeout=150) as resp:
             return json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        body = e.read().decode(errors="replace")
+        try:
+            parsed = json.loads(body)
+        except Exception:
+            parsed = body
+        print(f"  HTTP {e.code}: {parsed}")
+        return parsed if isinstance(parsed, dict) else None
     except urllib.error.URLError as e:
         print(f"  HTTP error: {e}")
         return None
@@ -77,6 +85,14 @@ def http_get(path):
     try:
         with urllib.request.urlopen(url, timeout=150) as resp:
             return json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        body = e.read().decode(errors="replace")
+        try:
+            parsed = json.loads(body)
+        except Exception:
+            parsed = body
+        print(f"  GET {e.code}: {parsed}")
+        return parsed if isinstance(parsed, dict) else None
     except Exception as e:
         print(f"  GET error: {e}")
         return None

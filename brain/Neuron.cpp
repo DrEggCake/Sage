@@ -1,50 +1,72 @@
 #include "Neuron.h"
 #include "Synapse.h"
 
+#include <algorithm>
+#include <cmath>
+
 Neuron::Neuron(NeuronType neuronType) {
     this->neuronType = neuronType;
 }
 
-void Neuron::stimulate(double amount) {
-    VOLTAGE += amount;
-}
+void Neuron::update() {
 
-void Neuron::fire() {
-    for (Synapse* s : synapsesOut) {
-        s->stimulate();
+    if (refractory > 0) {
+        refractory--;
+        fired = false;
+        return;
+    }
+
+    if (voltage >= threshold) {
+        fired = true;
+        fireCount++;
+        accumulatedDrive += voltage;
+        voltage -= threshold;
+        if (voltage < 0.0) voltage = 0.0;
+        for (Synapse* s : synapsesOut) {
+            s->stimulate();
+        }
+        refractory = REFRACTORY_TICKS;
+    } else {
+        fired = false;
+        voltage *= VOLTAGE_LEAK;
     }
 }
 
-void Neuron::spike() {
-
-    fire();
-
-    VOLTAGE -= THRESHOLD;
-
-    if (VOLTAGE < 0.0) {
-        VOLTAGE = 0.0;
+void Neuron::adjustThreshold(int targetRate) {
+    if (neuronType == NeuronType::INPUT || neuronType == NeuronType::OUTPUT) {
+        return;
     }
-
-    firedThisEpisode = true;
-    ELIGIBILITY = 1.0;
+    if (fireCount > targetRate) {
+        threshold += THRESHOLD_ADJUST_RATE;
+    } else if (fireCount < targetRate) {
+        threshold -= THRESHOLD_ADJUST_RATE;
+    }
+    threshold = std::clamp(threshold, THRESHOLD_MIN, THRESHOLD_MAX);
 }
 
-void Neuron::markFired() {
-
-    VOLTAGE = 0.0;
-    firedThisEpisode = true;
-    ELIGIBILITY = 1.0;
-}
-
-void Neuron::resetVoltage() {
-    VOLTAGE = 0.0;
+void Neuron::resetFireCount() {
+    fireCount = 0;
 }
 
 void Neuron::reset() {
+    voltage = 0.0;
+    eligibility = 0.0;
+    accumulatedDrive = 0.0;
+    fired = false;
+    refractory = 0;
+}
 
-    VOLTAGE = 0.0;
-    ELIGIBILITY = 0.0;
-    firedThisEpisode = false;
+void Neuron::setVoltage(double value) {
+    voltage = value;
+}
+
+void Neuron::pulse(double amount) {
+    voltage += amount;
+}
+
+void Neuron::markFired() {
+    fired = true;
+    fireCount++;
 }
 
 void Neuron::addSynapseIn(Synapse* synapse) {
@@ -56,23 +78,35 @@ void Neuron::addSynapseOut(Synapse* synapse) {
 }
 
 double Neuron::getVoltage() const {
-    return VOLTAGE;
+    return voltage;
 }
 
 double Neuron::getThreshold() const {
-    return THRESHOLD;
+    return threshold;
 }
 
 void Neuron::setThreshold(double threshold) {
-    THRESHOLD = threshold;
+    this->threshold = threshold;
 }
 
-bool Neuron::firedThisEpisodeCheck() const {
-    return firedThisEpisode;
+double Neuron::getAccumulatedDrive() const {
+    return accumulatedDrive;
+}
+
+int Neuron::getFireCount() const {
+    return fireCount;
+}
+
+bool Neuron::hasFired() const {
+    return fired;
 }
 
 std::vector<Synapse*>& Neuron::getSynapsesOut() {
     return synapsesOut;
+}
+
+std::vector<Synapse*>& Neuron::getSynapsesIn() {
+    return synapsesIn;
 }
 
 Neuron::NeuronType Neuron::getType() const {

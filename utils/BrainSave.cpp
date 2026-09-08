@@ -25,8 +25,6 @@ struct BrainDto {
     std::vector<int> wiringLimits;
 
     double learningRate;
-    double eligibilityDecay;
-    double leakRate;
 
     std::vector<double> thresholds;
     std::vector<double> synapseStrengths;
@@ -50,8 +48,6 @@ void to_json(json& j, const BrainDto& dto) {
         {"wiringLimits", dto.wiringLimits},
 
         {"learningRate", dto.learningRate},
-        {"eligibilityDecay", dto.eligibilityDecay},
-        {"leakRate", dto.leakRate},
 
         {"thresholds", dto.thresholds},
         {"synapseStrengths", dto.synapseStrengths},
@@ -74,9 +70,11 @@ void from_json(const json& j, BrainDto& dto) {
     j.at("layerSizes").get_to(dto.layerSizes);
     j.at("wiringLimits").get_to(dto.wiringLimits);
 
-    j.at("learningRate").get_to(dto.learningRate);
-    j.at("eligibilityDecay").get_to(dto.eligibilityDecay);
-    j.at("leakRate").get_to(dto.leakRate);
+    if (j.contains("learningRate")) {
+        j.at("learningRate").get_to(dto.learningRate);
+    } else {
+        dto.learningRate = 0.02;
+    }
 
     j.at("thresholds").get_to(dto.thresholds);
     j.at("synapseStrengths").get_to(dto.synapseStrengths);
@@ -101,8 +99,6 @@ BrainDto toDto(const Brain& brain) {
     dto.wiringLimits = brain.getWiringLimits();
 
     dto.learningRate = brain.getLearningRate();
-    dto.eligibilityDecay = brain.getEligibilityDecay();
-    dto.leakRate = brain.getLeakRate();
 
     dto.thresholds = brain.getNeuronThresholds();
     dto.synapseStrengths = brain.getSynapseStrengths();
@@ -195,8 +191,6 @@ std::filesystem::path save(
 
     json j = dto;
 
-    // Pretty-print JSON, equivalent to Gson's
-    // GsonBuilder().setPrettyPrinting()
     out << j.dump(4) << '\n';
 
     if (!out) {
@@ -261,7 +255,6 @@ Brain load(const std::filesystem::path& file) {
     }
 
 
-    // Rebuild the deterministic topology.
     Brain brain(
         dto.layerSizes[0],
         dto.layerSizes[1],
@@ -276,62 +269,22 @@ Brain load(const std::filesystem::path& file) {
     );
 
 
-    // Restore learning configuration.
-    brain.setLearningRate(
-        dto.learningRate
-    );
+    brain.setLearningRate(dto.learningRate);
 
-    brain.setEligibilityDecay(
-        dto.eligibilityDecay
-    );
-
-    brain.setLeakRate(
-        dto.leakRate
-    );
-
-
-    // Restore trained neuron state.
     if (!dto.thresholds.empty()) {
-
-        brain.setNeuronThresholds(
-            dto.thresholds
-        );
+        brain.setNeuronThresholds(dto.thresholds);
     }
 
-
-    // Restore trained synapse state.
     if (!dto.synapseStrengths.empty()) {
-
-        brain.setSynapseStrengths(
-            dto.synapseStrengths
-        );
+        brain.setSynapseStrengths(dto.synapseStrengths);
     }
 
-
-    // Restore training statistics.
-    brain.setEpisodesTrained(
-        dto.episodesTrained
-    );
-
-    brain.setSuccesses(
-        dto.successes
-    );
-
-    brain.setTotalReward(
-        dto.totalReward
-    );
-
-    brain.setTotalSteps(
-        dto.totalSteps
-    );
-
-    brain.setTotalFired(
-        dto.totalFired
-    );
-
-    brain.setBestReward(
-        dto.bestReward
-    );
+    brain.setEpisodesTrained(dto.episodesTrained);
+    brain.setSuccesses(dto.successes);
+    brain.setTotalReward(dto.totalReward);
+    brain.setTotalSteps(dto.totalSteps);
+    brain.setTotalFired(dto.totalFired);
+    brain.setBestReward(dto.bestReward);
 
     return brain;
 }

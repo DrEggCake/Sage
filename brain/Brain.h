@@ -28,11 +28,13 @@ private:
     std::vector<std::unique_ptr<Neuron>> layer3Neurons;
     std::vector<std::unique_ptr<Neuron>> outputNeurons;
 
+    std::vector<Synapse*> allSynapses;
+
     std::vector<std::unique_ptr<Synapse>> synapses;
 
-    double LEARNING_RATE = 0.02;
-    double ELIGIBILITY_DECAY = 0.95;
-    double LEAK_RATE = 0.0;
+    double learningRate = 0.02;
+    double dopamine = 0.0;
+    double dopamineDecay = 0.8;
 
     int episodesTrained = 0;
     int successes = 0;
@@ -43,9 +45,6 @@ private:
     long totalFired = 0;
 
     double bestReward = 0.0;
-
-    static constexpr double MIN_STRENGTH = -3.0;
-    static constexpr double MAX_STRENGTH = 3.0;
 
     void buildNeurons();
     void buildConnections();
@@ -60,6 +59,9 @@ private:
         Neuron* from,
         Neuron* to
     );
+
+    void getAllNeurons(std::vector<Neuron*>& out);
+    void getAllNeuronsConst(std::vector<const Neuron*>& out) const;
 
 public:
 
@@ -77,7 +79,15 @@ public:
         int layer3ToOutput
     );
 
-    // Serialization
+    void tick();
+    void setInput(int index, double value);
+    double getOutput(int index) const;
+    void resetOutputs();
+    void reward(double amount);
+    void releaseDopamine(double amount);
+    void adjustThresholds(int targetRate);
+    void reset();
+
     std::vector<int> getLayerSizes() const;
     std::vector<int> getWiringLimits() const;
 
@@ -92,16 +102,9 @@ public:
         const std::vector<double>& strengths
     );
 
-    // Learning configuration
     double getLearningRate() const;
-    double getEligibilityDecay() const;
-    double getLeakRate() const;
-
     void setLearningRate(double value);
-    void setEligibilityDecay(double value);
-    void setLeakRate(double value);
 
-    // Training statistics
     int getEpisodesTrained() const;
     int getSuccesses() const;
     double getTotalReward() const;

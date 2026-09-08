@@ -39,6 +39,7 @@ jobs:
             libgl1 libglu1-mesa libegl1 libegl-mesa0 libgles2 libgbm1 \
             libglib2.0-0 libfontconfig1 libxkbcommon0 libxkbcommon-x11-0 \
             libvulkan1 mesa-vulkan-drivers \
+            libsndio7.0 \
             libxrandr2 libxinerama1 libxcursor1 libxi6
 
       # ---- MuJoCo baseline (fast; uploads even if the long OmniSim build fails) ----
@@ -91,6 +92,14 @@ jobs:
           test -f bin/omnisim-bin || { echo "FATAL: no omnisim-bin in cached build"; exit 1; }
           ldd bin/omnisim-bin | grep -q 'libpython3\.12' \
             || { echo "FATAL: omnisim-bin does not link libpython3.12"; exit 1; }
+
+      - name: Check omnisim-bin shared lib deps (report any missing)
+        run: |
+          cd omnisim
+          echo "=== missing shared libs (if any) ==="
+          ldd bin/omnisim-bin 2>/dev/null | grep "not found" || echo "(none)"
+          echo "=== sndio check ==="
+          ls -la /usr/lib/x86_64-linux-gnu/libsndio.so.7 2>/dev/null || echo "libsndio.so.7 MISSING"
 
       # Validate that OUR hand-authored .omniworld mirrors load and run, using
       # the engine's own headless smoke path (forces Newton).

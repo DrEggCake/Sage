@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sage cross-sim replay</title>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --line: #30363d;
+    --text: #c9d1d9; --dim: #8b949e; --accent: #58a6ff;
+    --mujoco: #39d98a; --omnisim: #ff7a3d;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+               font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  #root { display: flex; flex-direction: column; height: 100%; }
+  #toolbar { display: flex; align-items: center; gap: 14px; padding: 8px 12px;
+             background: var(--panel); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  #toolbar label { color: var(--dim); }
+  select, button, input[type=range] { background: var(--bg); color: var(--text);
+             border: 1px solid var(--line); border-radius: 4px; padding: 4px 8px; }
+  button { cursor: pointer; } button:hover { border-color: var(--accent); }
+  button.active { border-color: var(--accent); color: var(--accent); }
+  input[type=range] { width: 260px; accent-color: var(--accent); }
+  .chk { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
+  #views { flex: 1; display: flex; min-height: 0; }
+  .view { position: relative; flex: 1 1 0; min-width: 0; }
+  .view.hidden { display: none !important; }
+  .view canvas { width: 100% !important; height: 100% !important; display: block; }
+  .view + .view { border-left: 2px solid var(--line); }
+  .tag { position: absolute; top: 6px; left: 8px; z-index: 5; padding: 2px 8px;
+         background: rgba(13,17,23,.75); border: 1px solid var(--line); border-radius: 4px;
+         font-size: 12px; }
+  #no-data { position: absolute; inset: 0; display: none; place-items: center; z-index: 10;
+             font-size: 16px; color: var(--dim); background: var(--bg); }
+  .hud { position: absolute; z-index: 6; padding: 6px 9px; background: rgba(13,17,23,.72);
+         border: 1px solid var(--line); border-radius: 5px; font-size: 11.5px;
+         pointer-events: none; user-select: none; line-height: 1.5; }
+  .hud.tl { top: 34px; left: 8px; } .hud.tr { top: 8px; right: 8px; }
+  .hud.bl { bottom: 8px; left: 8px; } .hud.br { bottom: 8px; right: 8px; }
+  .hud b { color: var(--text); font-weight: 600; }
+  .hl-m { color: var(--mujoco); } .hl-o { color: var(--omnisim); }
+  .dim { color: var(--dim); }
+  #timeline { flex: 1; min-width: 160px; }
+  .error-banner { position: absolute; inset: 0; display: none; place-items: center;
+         z-index: 20; background: rgba(13,17,23,.85); font-size: 14px; color: #ff7b72;
+         padding: 24px; text-align: center; }
+</style>
+</head>
+<body>
+<div id="root">
+  <div id="toolbar">
+    <label>Scenario
+      <select id="scenario"></select>
+    </label>
+    <label class="chk"><input type="checkbox" id="eng-mujoco" checked>
+      <span class="hl-m">MuJoCo</span></label>
+    <label class="chk"><input type="checkbox" id="eng-omnisim" checked>
+      <span class="hl-o">OmniSim</span></label>
+    <button id="btn-play" title="space">Pause</button>
+    <label>Speed
+      <input type="range" id="speed" min="0.1" max="8" step="0.1" value="1">
+      <span id="speed-val">1.0x</span></label>
+    <button id="btn-prev" title=", / &larr;">&lt; frame</button>
+    <input type="range" id="timeline" min="0" max="1" step="1" value="0">
+    <button id="btn-next" title=". / &rarr;">frame &gt;</button>
+    <button id="btn-loop" title="L">Loop</button>
+    <button id="btn-camera" title="R">Reset camera</button>
+    <button id="btn-full" title="F">Fullscreen</button>
+  </div>
+
+  <div id="views">
+    <div id="view-mujoco" class="view"><div class="tag hl-m">MuJoCo</div></div>
+    <div id="view-omnisim" class="view"><div class="tag hl-o">OmniSim</div></div>
+    <div id="no-data">No recordings found for this scenario.</div>
+  </div>
+</div>
+
+<div class="hud tl" id="hud-tl"></div>
+<div class="hud tr" id="hud-tr"></div>
+<div class="hud bl" id="hud-bl"></div>
+<div class="hud br" id="hud-br"></div>
+<div class="error-banner" id="err">…</div>
+
+<script type="importmap">
+{ "imports": { "three": "./vendor/three.module.min.js" } }
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from './vendor/OrbitControls.js';
+
+const $ = id => document.getElementById(id);
+const SELS = ['mujoco', 'omnisim'];
+const COLOR = { mujoco: 0x39d98a, omnisim: 0xff7a3d };
+
+const state = {
+  scenario: null,
+  recordings: {},      // engine -> {scenario, samples: {t, xyz, vel}, meta}
+  t: 0, playing: false, speed: 1.0, loop: true,
+  keyframes: [],       // sorted union of relative sample times
+  kfps: 24,
+  disabled: { mujoco: false, omnisim: false },
+  lastTs: performance.now(),
+  frameCount: 0, fps: 0,
+};
+
+const scenes = {};
+const views = {};
+const panels = {};
+SELS.forEach(eng => {
+  const div = document.getElementById('view-' + eng);
+  const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: false });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  div.appendChild(renderer.domElement);
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x0d1117);
+  scene.fog = new THREE.Fog(0x0d1117, 18, 40);
+
+  const cam = new THREE.PerspectiveCamera(55, 1, 0.05, 400);
+  cam.position.set(4.5, -6.5, 4.5);
+  const controls = new OrbitControls(cam, renderer.domElement);
+  controls.target.set(0, 0, 0.8);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.08;
+
+  scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+  const sun = new THREE.DirectionalLight(0xffffff, 1.1);
+  sun.position.set(3, -4, 6);
+  scene.add(sun);
+
+  const grid = new THREE.GridHelper(10, 20, 0x3b4451, 0x242b33);
+  scene.add(grid);
+  const axis = new THREE.AxesHelper(1.4);
+  scene.add(axis);
+  const floor = new THREE.Mesh(
+    new THREE.PlaneGeometry(12, 12),
+    new THREE.MeshStandardMaterial({ color: 0x1a2027, roughness: 1, metalness: 0, side: THREE.DoubleSide }));
+  floor.rotation.x = -Math.PI / 2;
+  floor.position.y = 0;
+  floor.position.z = 0;
+  scene.add(floor);
+
+  scenes[eng] = scene; views[eng] = { scene, cam, controls, renderer };
+  panels[eng] = div;
+});
+
+function resize() {
+  SELS.forEach(eng => {
+    const { renderer, cam } = views[eng];
+    const div = panels[eng];
+    const w = Math.max(div.clientWidth, 1), h = Math.max(div.clientHeight, 1);
+    renderer.setSize(w, h);
+    cam.aspect = w / h; cam.updateProjectionMatrix();
+  });
+}
+window.addEventListener('resize', resize);
+new ResizeObserver(resize).observe(document.getElementById('views'));
+
+/* ---------------- CSV parsing ---------------- */
+function parseCSV(text) {
+  const rows = text.trim().split(/\r?\n/);
+  if (!rows.length) return null;
+  const header = rows[0].split(',').map(s => s.trim().toLowerCase());
+  const ci = name => header.indexOf(name);
+  const iiT = ci('time'), iiMs = ci('sim_time_ms'), iiX = ci('x'), iiY = ci('y'), iiZ = ci('z');
+  const has = v => v >= 0;
+  const out = [];
+  for (let r = 1; r < rows.length; r++) {
+    const c = rows[r].split(',');
+    if (c.length < Math.max(iiX, iiY, iiZ) + 1) continue;
+    const num = (j, d = NaN) => (j >= 0 && c[j] !== undefined && c[j].trim() !== '' ? parseFloat(c[j]) : d);
+    const x = num(iiX), y = num(iiY), z = num(iiZ);
+    if (!isFinite(x) || !isFinite(y) || !isFinite(z)) continue;
+    out.push({
+      t: has(iiT) ? num(iiT) : (r - 1),
+      sim: has(iiMs) ? num(iiMs) : null,
+      x, y, z,
+    });
+  }
+  return out;
+}
+
+function sampleAt(samples, t) {
+  if (!samples || samples.length === 0) return null;
+  if (t <= samples[0].t) return samples[0];
+  for (let i = 1; i < samples.length; i++) {
+    if (t <= samples[i].t) {
+      const a = samples[i - 1], b = samples[i];
+      const f = (t - a.t) / (b.t - a.t || 1);
+      return { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f, z: a.z + (b.z - a.z) * f };
+    }
+  }
+  return samples[samples.length - 1];
+}
+
+function trailPoints(samples, t, max = 600) {
+  const out = [];
+  for (const s of samples) {
+    if (s.t > t) break;
+    out.push(new THREE.Vector3(s.x, s.z, s.y));
+    if (out.length > max) out.shift();
+  }
+  return out;
+}
+
+/* ---------------- scene objects ---------------- */
+const markers = {}, trails = {}, begins = {}, endMarks = {};
+const starts = {};   // samples[0] pos
+const ends = {};     // samples.at(-1) pos
+
+function buildEngineObjects(eng) {
+  const scene = scenes[eng];
+  if (trails[eng]) { scene.remove(trails[eng]); scene.remove(markers[eng]); scene.remove(begins[eng]); scene.remove(endMarks[eng]); }
+
+  const trailMat = new THREE.LineBasicMaterial({ color: COLOR[eng], transparent: true, opacity: 0.85 });
+  const trailGeo = new THREE.BufferGeometry();
+  trailGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(0), 3));
+  const trail = new THREE.Line(trailGeo, trailMat);
+  scene.add(trail);
+
+  const marker = new THREE.Mesh(
+    new THREE.SphereGeometry(0.07, 20, 20),
+    new THREE.MeshStandardMaterial({ color: COLOR[eng], emissive: COLOR[eng], emissiveIntensity: 0.35 }));
+  scene.add(marker);
+
+  const begin = new THREE.Mesh(new THREE.SphereGeometry(0.045, 12, 12),
+    new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0x888888, emissiveIntensity: 0.5 }));
+  scene.add(begin);
+
+  const endBox = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.09, 0.09),
+    new THREE.MeshStandardMaterial({ color: 0xff5555, emissive: 0xff5555, emissiveIntensity: 0.4 }));
+  endBox.rotation.set(0.1, 0.1, 0.1);
+  scene.add(endBox);
+
+  trails[eng] = trail; markers[eng] = marker; begins[eng] = begin; endMarks[eng] = endBox;
+}
+
+function frameEngine(eng, p) {
+  if (!p) return;
+  markers[eng].position.set(p.x, p.z, p.y);
+  const pts = trailPoints(state.recordings[eng].samples, state.t);
+  const arr = new Float32Array(pts.length * 3);
+  pts.forEach((v, i) => { arr[i * 3] = v.x; arr[i * 3 + 1] = v.y; arr[i * 3 + 2] = v.z; });
+  trails[eng].geometry.setAttribute('position',
+    new THREE.BufferAttribute(arr, 3));
+  trails[eng].geometry.setDrawRange(0, pts.length);
+}
+
+/* ---------------- metadata ---------------- */
+function engineMeta(samples) {
+  if (!samples || samples.length < 2) return null;
+  const t0 = samples[0], d = Math.hypot(samples[samples.length - 1].x - t0.x,
+    samples[samples.length - 1].y - t0.y, samples[samples.length - 1].z - t0.z);
+  let max = 0;
+  for (const s of samples) {
+    const v = Math.hypot(s.x - t0.x, s.y - t0.y, s.z - t0.z);
+    if (v > max) max = v;
+  }
+  return {
+    duration: samples[samples.length - 1].t - samples[0].t,
+    maxDisplacement: max, finalDisplacement: d,
+    start: t0, final: samples[samples.length - 1],
+  };
+}
+
+/* ---------------- HUD ---------------- */
+function renderHUD() {
+  const rec = state.recordings;
+  const tl = [];
+  tl.push(`<b>Sage cross-sim replay</b>`);
+  tl.push(`<span class="dim">scenario:</span> <b>${state.scenario ?? '—'}</b>`);
+  tl.push(`<span class="dim">engines:</span> ${SELS.map(e => rec[e] ? `<span class="hl-${e[0]}">${e}</span>` : '').filter(Boolean).join(' + ') || 'none'}`);
+  for (const e of SELS) {
+    const m = rec[e] && engineMeta(rec[e].samples);
+    if (rec[e]) tl.push(`<span class="dim">${e}:</span> ${rec[e].samples.length} samples · dur ${m.duration.toFixed(2)}s · maxΔ ${m.maxDisplacement.toFixed(3)} m`);
+  }
+  $('hud-tl').innerHTML = tl.join('<br>');
+
+  const i = nearestKeyframe(state.t);
+  const tr = [];
+  tr.push(`<span class="dim">time:</span> <b>${state.t.toFixed(3)} s</b> · keyframe <b>${i + 1}/${state.keyframes.length}</b>`);
+  for (const e of SELS) {
+    const rec0 = rec[e];
+    if (!rec0) continue;
+    const p = sampleAt(rec0.samples, state.t);
+    const st = rec0.samples[0];
+    const delta = p ? Math.hypot(p.x - st.x, p.y - st.y, p.z - st.z) : 0;
+    tr.push(`<span class="hl-${e[0]}">${e}</span> ${p ? `(${p.x.toFixed(3)}, ${p.y.toFixed(3)}, ${p.z.toFixed(3)})` : '—'}` +
+      `${p ? ` <span class="dim">Δ ${delta.toFixed(3)} m</span>` : ''}` +
+      `${(p && rec0.samples[0].sim != null) ? ` <span class="dim">sim ${sampleSim(rec0, state.t)} ms</span>` : ''}`);
+  }
+  tr.push(`<span class="dim">status:</span> <b>${state.playing ? 'PLAYING' : 'PAUSED'}</b> · ${state.speed.toFixed(1)}x · ${state.loop ? 'loop' : 'one-shot'} · ${state.fps} fps`);
+  $('hud-tr').innerHTML = tr.join('<br>');
+
+  // bottom-left: cross-engine L2 distance at current t
+  const bl = [];
+  const pM = rec.mujoco && sampleAt(rec.mujoco.samples, state.t);
+  const pO = rec.omnisim && sampleAt(rec.omnisim.samples, state.t);
+  if (pM && pO) {
+    const d = Math.hypot(pM.x - pO.x, pM.y - pO.y, pM.z - pO.z);
+    bl.push(`<b>MuJoCo vs OmniSim</b> distance: <b>${d.toFixed(4)} m</b>`);
+  }
+  if (rec.mujoco && rec.omnisim) {
+    const mM = engineMeta(rec.mujoco.samples), mO = engineMeta(rec.omnisim.samples);
+    if (mM && mO) bl.push(`<span class="dim">end</span> M (${mM.final.x.toFixed(3)}, ${mM.final.y.toFixed(3)}, ${mM.final.z.toFixed(3)}) · O (${mO.final.x.toFixed(3)}, ${mO.final.y.toFixed(3)}, ${mO.final.z.toFixed(3)})`);
+  }
+  $('hud-bl').innerHTML = bl.join('<br>');
+
+  const br = [];
+  br.push(`<b>controls</b>`);
+  br.push(`space play/pause · <span class="dim">←/→</span> frame step · <span class="dim">L</span> loop`);
+  br.push(`<span class="dim">[</span>/<span class="dim">]</span> speed · <span class="dim">R</span> camera · <span class="dim">F</span> fullscreen`);
+  br.push(`<span class="dim">drag</span> orbit · <span class="dim">wheel</span> zoom · <span class="dim">right-drag</span> pan`);
+  $('hud-br').innerHTML = br.join('<br>');
+}
+
+function sampleSim(rec, t) {
+  const s = rec.samples;
+  const v = sampleAt(s, t); // nearest/interp
+  const base = rec.samples?.[0]?.sim ?? 0;
+  return (base + (v ? (t - s[0].t) * 1000 : 0)).toFixed(0);
+}
+
+function nearestKeyframe(t) {
+  let k = state.keyframes.findIndex(x => x >= t);
+  if (k < 0) k = state.keyframes.length - 1;
+  if (k > 0 && Math.abs(state.keyframes[k - 1] - t) < Math.abs(state.keyframes[k] - t)) k--;
+  return Math.max(0, k);
+}
+
+/* ---------------- playback ---------------- */
+function frameStep(dtKey) {
+  const i = nearestKeyframe(state.t);
+  const next = Math.min(Math.max(i + (dtKey > 0 ? 1 : -1), 0), state.keyframes.length - 1);
+  state.t = state.keyframes[next];
+  if (!state.playing) tick();
+}
+
+function tick() {
+  SELS.forEach(eng => { if (state.recordings[eng]) frameEngine(eng, sampleAt(state.recordings[eng].samples, state.t)); });
+  const i = nearestKeyframe(state.t);
+  $('timeline').value = i;
+  renderHUD();
+}
+
+function play() {
+  if (!state.keyframes.length) return;
+  if (state.t >= state.keyframes[state.keyframes.length - 1]) state.t = 0;
+  state.playing = true; $('btn-play').textContent = 'Pause';
+}
+
+function pause() {
+  state.playing = false; $('btn-play').textContent = 'Play';
+}
+
+const rafLoop = now => {
+  state.frameCount++;
+  const dtReal = (now - state.lastTs) / 1000;
+  state.lastTs = now;
+  if (state.playing && dtReal > 0) {
+    // Sim-time playback: 1.0x replays the recorded seconds in real seconds.
+    state.t += dtReal * state.speed;
+    const dur = state.keyframes[state.keyframes.length - 1] || 0;
+    if (state.loop) {
+      if (state.t > dur) state.t -= dur;
+    } else if (state.t > dur) { state.t = dur; pause(); }
+    state.t = Math.max(0, Math.min(state.t, dur));
+    tick();
+  }
+  SELS.forEach(eng => {
+    const v = views[eng];
+    if (!panels[eng].classList.contains('hidden')) { v.controls.update(); v.renderer.render(v.scene, v.cam); }
+  });
+  requestAnimationFrame(rafLoop);
+};
+
+/* ---------------- loading ---------------- */
+async function loadScenario(scenario) {
+  const manifest = state.manifest;
+  const picks = manifest.recordings.filter(r => r.scenario === scenario);
+  state.recordings = {};
+  // clean up old objects
+  SELS.forEach(eng => {
+    if (trails[eng]) scenes[eng].remove(trails[eng]); if (markers[eng]) scenes[eng].remove(markers[eng]);
+    if (begins[eng]) scenes[eng].remove(begins[eng]); if (endMarks[eng]) scenes[eng].remove(endMarks[eng]);
+    panels[eng].classList.toggle('hidden', eng === 'omnisim' ? !state.showEng.omnisim : !state.showEng.mujoco);
+  });
+  for (const p of picks) {
+    try {
+      const res = await fetch(p.file);
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const text = await res.text();
+      const samples = parseCSV(text);
+      if (samples && samples.length) {
+        const t0 = samples[0].t;
+        samples.forEach(s => { s.rel = s.t - t0; s.t = s.rel; });
+        state.recordings[p.engine] = { scenario, samples, file: p.file };
+        buildEngineObjects(p.engine);
+        // frame camera to data bounds
+        frameCamera(p.engine, samples);
+      }
+    } catch (e) { console.error(`[replay] ${p.engine}: ${e.message}`); }
+  }
+  // union timeline on relative time
+  const keySet = new Set();
+  SELS.forEach(eng => { if (state.recordings[eng]) state.recordings[eng].samples.forEach(s => keySet.add(s.rel)); });
+  state.keyframes = Array.from(keySet).sort((a, b) => a - b);
+  $('timeline').max = Math.max(state.keyframes.length - 1, 1);
+  state.t = 0;
+  SELS.forEach(eng => {
+    if (state.recordings[eng]) { starts[eng] = state.recordings[eng].samples[0]; ends[eng] = state.recordings[eng].samples[state.recordings[eng].samples.length - 1]; }
+  });
+  tick();
+  if (state.keyframes.length) {
+    $('no-data').style.display = 'none';
+    if (!state.playing) play();
+  } else {
+    $('no-data').style.display = 'grid';
+    pause();
+  }
+}
+
+function frameCamera(eng, samples) {
+  let lo = new THREE.Vector3(1e9, 1e9, 1e9), hi = new THREE.Vector3(-1e9, -1e9, -1e9);
+  for (const s of samples) {
+    lo.x = Math.min(lo.x, s.x); lo.y = Math.min(lo.y, s.z); lo.z = Math.min(lo.z, s.y);
+    hi.x = Math.max(hi.x, s.x); hi.y = Math.max(hi.y, s.z); hi.z = Math.max(hi.z, s.y);
+  }
+  lo.y = Math.min(lo.y, 0); hi.y = Math.max(hi.y, 0.01);
+  const c = new THREE.Vector3().addVectors(lo, hi).multiplyScalar(0.5);
+  const span = hi.distanceTo(lo);
+  const dist = Math.max(span * 1.6, 4);
+  const { cam, controls } = views[eng];
+  controls.target.copy(c);
+  cam.position.copy(c).add(new THREE.Vector3(dist * 0.65, -dist * 0.85, dist * 0.7));
+  cam.near = dist / 500; cam.far = dist * 40; cam.updateProjectionMatrix();
+}
+
+function resetAllCameras() {
+  SELS.forEach(eng => { if (state.recordings[eng]) frameCamera(eng, state.recordings[eng].samples); });
+}
+
+/* ---------------- UI wiring ---------------- */
+async function init() {
+  $('btn-loop').classList.toggle('active', state.loop);
+  $('btn-play').onclick = () => state.playing ? pause() : play();
+  $('btn-loop').onclick = () => { state.loop = !state.loop; $('btn-loop').classList.toggle('active', state.loop); };
+  $('btn-prev').onclick = () => frameStep(-1);
+  $('btn-next').onclick = () => frameStep(1);
+  $('btn-camera').onclick = resetAllCameras;
+  $('btn-full').onclick = () => { if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen(); };
+  $('speed').oninput = () => { state.speed = parseFloat($('speed').value); $('speed-val').textContent = state.speed.toFixed(1) + 'x'; };
+  $('scenario').onchange = () => { state.scenario = $('scenario').value; loadScenario(state.scenario); };
+  $('eng-mujoco').onchange = () => { state.showEng.mujoco = $('eng-mujoco').checked; panels.mujoco.classList.toggle('hidden', !state.showEng.mujoco); layout(); };
+  $('eng-omnisim').onchange = () => { state.showEng.omnisim = $('eng-omnisim').checked; panels.omnisim.classList.toggle('hidden', !state.showEng.omnisim); layout(); };
+  $('timeline').oninput = () => {
+    const i = parseInt($('timeline').value, 10);
+    state.t = state.keyframes[Math.min(Math.max(i, 0), state.keyframes.length - 1)] ?? 0;
+    tick();
+  };
+
+  document.addEventListener('keydown', e => {
+    if (e.target.tagName === 'INPUT' && e.target.type === 'range') return;
+    if (e.code === 'Space') { e.preventDefault(); state.playing ? pause() : play(); }
+    else if (e.code === 'ArrowLeft' || e.code === 'Comma') { e.preventDefault(); frameStep(-1); }
+    else if (e.code === 'ArrowRight' || e.code === 'Period') { e.preventDefault(); frameStep(1); }
+    else if (e.code === 'BracketLeft') { $('speed').value = Math.max(0.1, state.speed - 0.5).toFixed(1); $('speed').oninput(); }
+    else if (e.code === 'BracketRight') { $('speed').value = Math.min(8, state.speed + 0.5).toFixed(1); $('speed').oninput(); }
+    else if (e.code === 'KeyL') { $('btn-loop').click(); }
+    else if (e.code === 'KeyR') { resetAllCameras(); }
+    else if (e.code === 'KeyF') { $('btn-full').click(); }
+  });
+
+  try {
+    const res = await fetch('/api/manifest');
+    const manifest = await res.json();
+    if (manifest.error) throw new Error(manifest.error);
+    state.manifest = manifest;
+    const scen = [...new Set(manifest.recordings.map(r => r.scenario))].sort();
+    if (!scen.length) throw new Error('no *_mujoco.csv / *_omnisim.csv recordings in the results dir');
+    state.showEng = { mujoco: true, omnisim: true };
+    scen.forEach(s => { const o = document.createElement('option'); o.value = s; o.textContent = s; $('scenario').appendChild(o); });
+    $('scenario').value = scen[0];
+    state.scenario = scen[0];
+    $('timeline').max = 1;
+    await loadScenario(scen[0]);
+  } catch (e) {
+    const b = $('err'); b.style.display = 'grid'; b.textContent = 'Replay failed: ' + e.message;
+  }
+}
+
+function layout() {
+  // if only one engine shown, let it fill the strip; two keep 50/50
+  const vis = e => !panels[e].classList.contains('hidden');
+  const anyM = vis('mujoco'), anyO = vis('omnisim');
+  panels.mujoco.style.flex = anyO ? '1 1 0' : '1 1 100%';
+  panels.omnisim.style.flex = anyM ? '1 1 0' : '1 1 100%';
+  resize();
+}
+
+state.showEng = { mujoco: true, omnisim: true };
+init();
+requestAnimationFrame(rafLoop);
+</script>
+</body>
+</html>

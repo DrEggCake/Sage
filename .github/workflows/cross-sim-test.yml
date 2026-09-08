@@ -35,7 +35,10 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential cmake xvfb xauth libgl1 libglu1-mesa libglib2.0-0 \
+            build-essential cmake xvfb xauth \
+            libgl1 libglu1-mesa libegl1 libegl-mesa0 libgles2 libgbm1 \
+            libglib2.0-0 libfontconfig1 libxkbcommon0 libxkbcommon-x11-0 \
+            libvulkan1 mesa-vulkan-drivers \
             libxrandr2 libxinerama1 libxcursor1 libxi6
 
       # ---- MuJoCo baseline (fast; uploads even if the long OmniSim build fails) ----

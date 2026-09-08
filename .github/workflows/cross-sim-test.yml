@@ -42,6 +42,8 @@ jobs:
             libsndio7.0 \
             libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
             libxcb-render-util0 libxcb-xinerama0 libxcb-xkb1 \
+            libxcb-shape0 libxcb-render0 libxcb-randr0 libxcb-shm0 \
+            libxcb-xfixes0 libxcb-glx0 libxcb-xv0 libxcb-xtest0 libxcb-util1 \
             libxrandr2 libxinerama1 libxcursor1 libxi6
 
       # ---- MuJoCo baseline (fast; uploads even if the long OmniSim build fails) ----
@@ -98,18 +100,13 @@ jobs:
       - name: Check omnisim-bin shared lib deps (report any missing)
         run: |
           cd omnisim
-          echo "=== missing shared libs (if any) ==="
-          ldd bin/omnisim-bin 2>/dev/null | grep "not found" || echo "(none)"
-          echo "=== sndio check ==="
-          ls -la /usr/lib/x86_64-linux-gnu/libsndio.so.7 2>/dev/null || echo "libsndio.so.7 MISSING"
-          echo "=== xcb platform plugin location ==="
-          ls -la lib/webots/qt/plugins/platforms/ 2>/dev/null || echo "no qt/plugins/platforms dir"
-          echo "=== ldd on libqxcb.so (missing) ==="
-          ldd lib/webots/qt/plugins/platforms/libqxcb.so 2>/dev/null | grep "not found" || echo "(no missing in libqxcb)"
-          echo "=== ALL libqxcb-covered dirs ==="
-          find lib -path '*platforms/libqxcb*' 2>/dev/null || echo "(none found anywhere)"
-          echo "=== Qt6XcbQpa location ==="
-          find lib/webots -name 'libQt6XcbQpa.so*' 2>/dev/null || echo "(no libQt6XcbQpa in lib/webots)"
+          export LD_LIBRARY_PATH="$PWD/lib/webots"${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
+          echo "=== full-tree ldd closure (missing libs, if any) ==="
+          find lib/webots bin -name 'omnisim-bin' -o -name '*.so*' | while read f; do
+            miss=$(ldd "$f" 2>/dev/null | grep "not found" || true)
+            if [ -n "$miss" ]; then echo "--- $f"; echo "$miss"; fi
+          done
+          echo "=== end tree scan ==="
 
       # Validate that OUR hand-authored .omniworld mirrors load and run, using
       # the engine's own headless smoke path (forces Newton).

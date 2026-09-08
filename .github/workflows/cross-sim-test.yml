@@ -89,6 +89,15 @@ jobs:
           JOBS=4 bash scripts/install/linux_bootstrap.sh build
           bash scripts/install/linux_bootstrap.sh gpu
 
+      # The wheels go into the SYSTEM python3 the cached binary embeds -- apt and
+      # the omnisim/ cache do not carry them, so a cache-hit runner would come up
+      # with "NO PHYSICS BACKEND". Run gpu every time (idempotent; torch skipped).
+      - name: Install Newton runtime wheels into system python3
+        run: |
+          cd omnisim
+          export OMNISIM_HOME="$GITHUB_WORKSPACE/omnisim"
+          OMNISIM_SKIP_TORCH=1 bash scripts/install/linux_bootstrap.sh gpu
+
       - name: Verify OmniSim binary + renderer (cache-hit path)
         if: steps.omni-cache.outputs.cache-hit == 'true'
         run: |

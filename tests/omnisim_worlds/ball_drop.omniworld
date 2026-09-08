@@ -1,0 +1,59 @@
+#OMNISIM R2025a utf8
+# Sage cross-sim test #2: ball drop with friction.
+#
+# Mirrors tests/models/ball_drop.xml (MuJoCo MJCF):
+#   - sphere, mass 0.5 kg, radius 0.05 m, dropped from z = 2.0 m
+#   - flat floor, gravity -9.81
+#   - timestep 5 ms (MuJoCo dt 0.005)
+#   - deterministic baseline: free fall, no controller.
+# Sphere and Box are exact primitives on the Newton path (Cylinder is the one
+# that gets substituted to a capsule), so the collider matches the drawn shape.
+#
+# NOTE (setup assumption): MuJoCo's tangential friction tuple
+# (0.8 0.005 0.001) maps to OmniSim's newtonGroundMu (single scalar); the
+# directional/rolling splines have no direct Newton equivalent. Record any
+# resting-position difference as a physics-engine divergence.
+
+EXTERNPROTO "omnisim://projects/objects/backgrounds/protos/OmniSimSky.proto"
+EXTERNPROTO "omnisim://projects/objects/lights/protos/OmniSimSun.proto"
+EXTERNPROTO "omnisim://projects/objects/lights/protos/OmniSimSunMarker.proto"
+
+WorldInfo {
+  title "Sage ball drop"
+  basicTimeStep 5
+  defaultPhysicsBackend "newton"
+  newtonSolver "mujoco"
+  newtonGroundMu 0.8
+  physicsDisableTime 0
+}
+Viewpoint {
+  orientation -0.278945 0.120681 0.952694 2.359689
+  position 1.0 -2.0 2.0
+}
+OmniSimSky { }
+DEF SUN OmniSimSun { }
+DEF SUN_MARKER OmniSimSunMarker { }
+
+DEF FLOOR Solid {
+  children [
+    Shape {
+      appearance PBRAppearance { baseColor 0.80 0.80 0.80 roughness 1 metalness 0 }
+      geometry Box { size 4 4 0.1 }
+    }
+  ]
+  name "floor"
+  boundingObject Box { size 4 4 0.1 }
+}
+
+DEF BALL Solid {
+  translation 0 0 2.0
+  children [
+    Shape {
+      appearance PBRAppearance { baseColor 0.90 0.20 0.20 roughness 0.6 metalness 0 }
+      geometry Sphere { radius 0.05 }
+    }
+  ]
+  name "ball"
+  boundingObject Sphere { radius 0.05 }
+  physics Physics { mass 0.5 }
+}

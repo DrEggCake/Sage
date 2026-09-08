@@ -1,0 +1,106 @@
+#OMNISIM R2025a utf8
+# Sage cross-sim test #1: cart-pole balancing.
+#
+# Mirrors tests/models/cart_pole.xml (MuJoCo MJCF) so the same scene can be
+# replayed on OmniSim:
+#   - cart slides along +X on a SliderJoint (MuJoCo "slider", axis 1 0 0,
+#     range +-2.0 m)
+#   - pole hinged about +Y at the cart (MuJoCo "hinge", range +-pi/2)
+#   - gravity -9.81, timestep 20 ms (MuJoCo dt 0.02)
+#   - deterministic baseline: motor present but commanded 0 via the "empty"
+#     (no-op) controller — identical to the MuJoCo harness, which never
+#     applies actuator force. Dynamics are unforced under gravity.
+#
+# RUNNING ON NEWTON + MUJOCO SOLVER for an apples-to-apples comparison against
+# the MuJoCo baseline (same solver family, different host engine).
+#
+# NOTE (first setup assumption, for the reviewer): there is no shared scene format
+# between MuJoCo (MJCF) and OmniSim (.omniworld / Webots-style), so the cart,
+# slider damping, and hinge limits are re-expressed per-simulator. Anything
+# here that CI's `run-headless` rejects is a real setup divergence to record.
+
+EXTERNPROTO "omnisim://projects/objects/backgrounds/protos/OmniSimSky.proto"
+EXTERNPROTO "omnisim://projects/objects/lights/protos/OmniSimSun.proto"
+EXTERNPROTO "omnisim://projects/objects/lights/protos/OmniSimSunMarker.proto"
+
+WorldInfo {
+  title "Sage cart-pole"
+  basicTimeStep 20
+  defaultPhysicsBackend "newton"
+  newtonSolver "mujoco"
+  newtonGroundMu 1.0
+  physicsDisableTime 0
+}
+Viewpoint {
+  orientation -0.278945 0.120681 0.952694 2.359689
+  position 1.387 -1.449 2.773
+}
+OmniSimSky { }
+DEF SUN OmniSimSun { }
+DEF SUN_MARKER OmniSimSunMarker { }
+
+# Floor (static collider).
+DEF FLOOR Solid {
+  children [
+    Shape {
+      appearance PBRAppearance { baseColor 0.80 0.80 0.80 roughness 1 metalness 0 }
+      geometry Box { size 10 10 0.2 }
+    }
+  ]
+  name "floor"
+  boundingObject Box { size 10 10 0.2 }
+}
+
+# Cart + pole as a Robot (joints host). No-op "empty" controller = zero
+# actuation baseline, matching the MuJoCo harness.
+DEF CART Robot {
+  translation 0 0 0.15
+  name "cart"
+  controller "empty"
+  children [
+    SliderJoint {
+      jointParameters JointParameters {
+        axis 1 0 0
+        minStop -2.0
+        maxStop 2.0
+      }
+      device [
+        LinearMotor { name "cart_force" maxForce 100 }
+      ]
+      endPoint Solid {
+        children [
+          Shape {
+            appearance PBRAppearance { baseColor 0.20 0.60 0.90 roughness 0.5 metalness 0.2 }
+            geometry Box { size 0.4 0.2 0.1 }
+          }
+          HingeJoint {
+            jointParameters HingeJointParameters {
+              axis 0 1 0
+              anchor 0 0 0
+              minStop -1.5708
+              maxStop 1.5708
+            }
+            device [
+              RotationalMotor { name "pole_hinge" maxTorque 100 }
+            ]
+            endPoint Solid {
+              translation 0 0 0
+              children [
+                Shape {
+                  appearance PBRAppearance { baseColor 0.90 0.30 0.20 roughness 0.6 metalness 0.2 }
+                  geometry Cylinder { radius 0.025 height 0.5 }
+                }
+              ]
+              name "pole"
+              boundingObject Cylinder { radius 0.025 height 0.5 }
+              physics Physics { mass 0.1 }
+            }
+          }
+        ]
+        name "cart_body"
+        boundingObject Box { size 0.4 0.2 0.1 }
+        physics Physics { mass 1.0 }
+      }
+    }
+  ]
+}

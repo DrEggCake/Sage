@@ -1,0 +1,122 @@
+#OMNISIM R2025a utf8
+# Sage cross-sim test #3: simple arm reach.
+#
+# Mirrors tests/models/arm_reach.xml (MuJoCo MJCF):
+#   - 2-DOF arm: shoulder and elbow revolute joints about +Y
+#     (MuJoCo "shoulder" and "elbow", range +-pi/2), gravity -9.81
+#   - base cylinder at z = 0.05; ee sphere (no collision) at the tip
+#   - target sphere at (0.3, 0, 0.35), non-colliding
+#   - timestep 10 ms (MuJoCo dt 0.01)
+#   - deterministic baseline: zero actuation (no-op "empty" controller), so
+#     the arm is released from its initial pose and swings under gravity.
+#
+# NOTE (setup assumption): link length/mass are re-expressed per-simulator
+# because there is no shared scene format with MuJoCo's MJCF. The arm's
+# gravity swing vs MuJoCo's gravity swing is a genuine cross-engine check of
+# the joint model, armature and damping.
+
+EXTERNPROTO "omnisim://projects/objects/backgrounds/protos/OmniSimSky.proto"
+EXTERNPROTO "omnisim://projects/objects/lights/protos/OmniSimSun.proto"
+EXTERNPROTO "omnisim://projects/objects/lights/protos/OmniSimSunMarker.proto"
+
+WorldInfo {
+  title "Sage arm reach"
+  basicTimeStep 10
+  defaultPhysicsBackend "newton"
+  newtonSolver "mujoco"
+  newtonGroundMu 1.0
+  physicsDisableTime 0
+}
+Viewpoint {
+  orientation -0.42 0.38 0.82 1.85
+  position 0.5 -1.0 0.8
+}
+OmniSimSky { }
+DEF SUN OmniSimSun { }
+DEF SUN_MARKER OmniSimSunMarker { }
+
+DEF FLOOR Solid {
+  children [
+    Shape {
+      appearance PBRAppearance { baseColor 0.80 0.80 0.80 roughness 1 metalness 0 }
+      geometry Box { size 6 6 0.1 }
+    }
+  ]
+  name "floor"
+  boundingObject Box { size 6 6 0.1 }
+}
+
+# Non-colliding target marker (matches MuJoCo contype/conaffinity 0).
+DEF TARGET Solid {
+  translation 0.3 0 0.35
+  children [
+    Shape {
+      appearance PBRAppearance { baseColor 0.90 0.90 0.20 roughness 0.8 metalness 0 transparency 0.5 }
+      geometry Sphere { radius 0.03 }
+    }
+  ]
+  name "target"
+}
+
+# 2-DOF arm as a Robot hosting the shoulder/elbow joints. No-op controller.
+DEF ARM Robot {
+  translation 0 0 0.05
+  name "arm"
+  controller "empty"
+  children [
+    DEF BASE Shape {
+      appearance PBRAppearance { baseColor 0.30 0.30 0.30 roughness 0.6 metalness 0.4 }
+      geometry Cylinder { radius 0.08 height 0.1 }
+    }
+    HingeJoint {
+      jointParameters HingeJointParameters {
+        axis 0 1 0
+        anchor 0 0 0.05
+        minStop -1.5708
+        maxStop 1.5708
+      }
+      device [
+        RotationalMotor { name "shoulder_motor" maxTorque 20 }
+      ]
+      endPoint Solid {
+        translation 0 0 0.05
+        children [
+          Shape {
+            appearance PBRAppearance { baseColor 0.20 0.60 0.90 roughness 0.6 metalness 0.2 }
+            geometry Cylinder { radius 0.03 height 0.3 }
+          }
+          HingeJoint {
+            jointParameters HingeJointParameters {
+              axis 0 1 0
+              anchor 0 0 0.3
+              minStop -1.5708
+              maxStop 1.5708
+            }
+            device [
+              RotationalMotor { name "elbow_motor" maxTorque 15 }
+            ]
+            endPoint Solid {
+              translation 0 0 0.3
+              children [
+                Shape {
+                  appearance PBRAppearance { baseColor 0.20 0.90 0.40 roughness 0.6 metalness 0.2 }
+                  geometry Cylinder { radius 0.025 height 0.2 }
+                }
+                Shape {
+                  appearance PBRAppearance { baseColor 0.90 0.20 0.20 roughness 0.6 metalness 0.2 }
+                  geometry Sphere { radius 0.02 }
+                }
+              ]
+              name "ee"
+              boundingObject Sphere { radius 0.02 }
+              physics Physics { mass 0.4 }
+            }
+          }
+        ]
+        name "link1"
+        boundingObject Cylinder { radius 0.03 height 0.3 }
+        physics Physics { mass 0.8 }
+      }
+    }
+  ]
+}

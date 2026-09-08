@@ -113,6 +113,7 @@ jobs:
           OMNISIM_NO_WINDOW: "1"
         run: |
           cd omnisim
+          export LD_LIBRARY_PATH="$GITHUB_WORKSPACE/omnisim/lib/webots${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
           OMNISIM_NO_WINDOW=1 xvfb-run -a python -m omnisim harness --port 6789 \
             > "$RUNNER_TEMP/omnisim-harness.log" 2>&1 &
           HPID=$!

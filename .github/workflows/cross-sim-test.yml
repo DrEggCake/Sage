@@ -14,12 +14,12 @@ jobs:
       - name: Check out Sage
         uses: actions/checkout@v4
 
-      - name: System packages (Qt/Vulkan/Xvfb that OmniSim's headless bootstraps need)
+      - name: System packages (Qt/Vulkan/Xvfb that OmniSim's headless run needs)
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             git python3 python3-pip python3-venv build-essential cmake \
-            libgl1 libgl1-mesa-glx libglib2.0-0 \
+            libgl1 libglib2.0-0 libxrandr2 libxinerama1 libxcursor1 libxi6 \
             xvfb xauth
           python3 --version
 

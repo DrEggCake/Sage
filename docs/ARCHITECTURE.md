@@ -71,8 +71,7 @@ sage/
 ├── .github/workflows/
 │   └── cross-sim-test.yml       # CI: MuJoCo baselines + OmniSim build + compare
 ├── docs/
-│   ├── ARCHITECTURE.md          # this file
-│   └── deliverable_cross_sim_first_mismatch.md  # deliverable write-up
+│   └── ARCHITECTURE.md          # this file
 └── README.md
 ```
 
@@ -423,7 +422,7 @@ Final CI outcome (run 34248901341): cart_pole avg L2 **0.982400**, ball_drop
 **0.112472**, arm_reach **0.601647** vs 0.05 threshold → all MISMATCH, and the
 script reports `*** FIRST MISMATCH ***`. Root cause: **Newton's solver freezes
 robot-jointed chains** (cart/arm), while free solids fall correctly (ball got
-within ~0.11). Documented at length in `docs/deliverable_cross_sim_first_mismatch.md`.
+within ~0.11).
 
 ---
 
@@ -604,7 +603,7 @@ CI comparison flow (the whole point of the repo):
 - **Cross-engine mismatch is a physics-engine gap, not a setup bug.** OmniSim's
   Newton solver freezes robot-jointed chains (cart_pole, arm_reach); free
   falling solids match closely (ball_drop avg L2 0.112, already below the old
-  failure noise). Details + traces in `docs/deliverable_cross_sim_first_mismatch.md`.
+  failure noise).
 - **The SNN's reward path barely learns sparse tasks.** `LEAK_RATE` (0.005/tick)
   swamps one-shot `reward()` updates scaled by a 0.02 learning rate; real
   behavior change comes from threshold homeostasis and sustained Hebbian

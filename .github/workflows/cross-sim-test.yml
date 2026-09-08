@@ -155,7 +155,7 @@ jobs:
           done
           curl -fsS http://127.0.0.1:6789/healthz || echo "HARNESS DID NOT COME UP"
           cd "$GITHUB_WORKSPACE"
-          python3 tests/omnisim_compare.py --harness-url http://127.0.0.1:6789
+          OMNISIM_DUMP_TREE=1 python3 tests/omnisim_compare.py --harness-url http://127.0.0.1:6789
           kill $HPID 2>/dev/null || true
 
       - name: Upload results and logs
@@ -165,5 +165,6 @@ jobs:
           name: sage-cross-sim-results
           path: |
             tests/results/**/*.csv
+            tests/results/**/*.json
             ${{ runner.temp }}/omnisim-harness.log
           if-no-files-found: warn

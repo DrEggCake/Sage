@@ -25,6 +25,7 @@ Usage:
 import argparse
 import csv
 import json
+import os
 import sys
 import urllib.request
 import urllib.error
@@ -156,6 +157,11 @@ def sample_position(track=None):
     if not scene or "nodes" not in scene:
         return None
     nodes = scene.get("nodes", [])
+    if os.environ.get("OMNISIM_DUMP_TREE"):
+        try:
+            Path(f"tests/results/scene_tree_{track}.json").write_text(json.dumps(scene, indent=1))
+        except OSError:
+            pass
     if track == "last-solid":
         for node in reversed(nodes):
             if node.get("type") == "Solid" and not node.get("harness_injected"):

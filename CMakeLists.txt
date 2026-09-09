@@ -98,6 +98,28 @@ if(MUJOCO_LIB AND MUJOCO_INCLUDE_DIR)
         PRIVATE
             "${MUJOCO_DIR}/lib"
     )
+
+    add_executable(dog_drive
+        tests/dog_drive.cpp
+    )
+
+    target_link_libraries(dog_drive
+        PRIVATE
+            sage_core
+            ${MUJOCO_LIB}
+            nlohmann_json::nlohmann_json
+    )
+
+    target_include_directories(dog_drive
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}
+            ${MUJOCO_INCLUDE_DIR}
+    )
+
+    target_link_directories(dog_drive
+        PRIVATE
+            "${MUJOCO_DIR}/lib"
+    )
 else()
     message(WARNING "MuJoCo not found — skipping cross_sim_test build")
 endif()

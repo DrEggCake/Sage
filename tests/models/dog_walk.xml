@@ -1,0 +1,104 @@
+<mujoco model="dog_walk">
+  <compiler angle="radian"/>
+  <option timestep="0.01" gravity="0 0 -9.81"/>
+
+  <default>
+    <geom rgba="0.35 0.55 0.9 1" friction="1.0 0.005 0.0001"/>
+    <joint armature="0.02" damping="0.3" limited="true"/>
+  </default>
+
+  <worldbody>
+    <geom name="floor" type="plane" size="10 3 0.1" rgba="0.8 0.8 0.8 1"/>
+
+    <body name="torso" pos="0 0 0.27">
+      <freejoint name="root"/>
+      <inertial mass="1.2" pos="0 0 0" diaginertia="0.03 0.09 0.1"/>
+      <geom name="torso_geom" type="box" size="0.2 0.08 0.05" rgba="0.9 0.6 0.2 1"/>
+      <site name="torso_site" pos="0 0 0" type="sphere" size="0.01"/>
+
+      <body name="FR_hip" pos="0.13 -0.075 0">
+        <inertial mass="0.15" pos="0 0 -0.055" diaginertia="0.0002 0.001 0.001"/>
+        <geom name="FR_thigh" type="capsule" size="0.02" fromto="0 0 0 0 0 -0.11" rgba="0.35 0.55 0.9 1"/>
+        <joint name="FR_hip_j" type="hinge" axis="0 1 0" range="-0.9 0.9"/>
+        <body name="FR_shank" pos="0 0 -0.11">
+          <inertial mass="0.1" pos="0 0 -0.055" diaginertia="0.0001 0.0008 0.0008"/>
+          <geom name="FR_shank" type="capsule" size="0.015" fromto="0 0 0 0 0 -0.11" rgba="0.3 0.75 0.4 1"/>
+          <joint name="FR_knee_j" type="hinge" axis="0 1 0" range="-0.3 1.2"/>
+          <body name="FR_foot" pos="0 0 -0.11">
+            <inertial mass="0.03" pos="0 0 0" diaginertia="0.0001 0.0001 0.0001"/>
+            <geom name="FR_foot" type="sphere" size="0.025" friction="1.2 0.005 0.0001" rgba="0.15 0.2 0.25 1"/>
+          </body>
+        </body>
+      </body>
+
+      <body name="FL_hip" pos="0.13 0.075 0">
+        <inertial mass="0.15" pos="0 0 -0.055" diaginertia="0.0002 0.001 0.001"/>
+        <geom name="FL_thigh" type="capsule" size="0.02" fromto="0 0 0 0 0 -0.11" rgba="0.35 0.55 0.9 1"/>
+        <joint name="FL_hip_j" type="hinge" axis="0 1 0" range="-0.9 0.9"/>
+        <body name="FL_shank" pos="0 0 -0.11">
+          <inertial mass="0.1" pos="0 0 -0.055" diaginertia="0.0001 0.0008 0.0008"/>
+          <geom name="FL_shank" type="capsule" size="0.015" fromto="0 0 0 0 0 -0.11" rgba="0.3 0.75 0.4 1"/>
+          <joint name="FL_knee_j" type="hinge" axis="0 1 0" range="-0.3 1.2"/>
+          <body name="FL_foot" pos="0 0 -0.11">
+            <inertial mass="0.03" pos="0 0 0" diaginertia="0.0001 0.0001 0.0001"/>
+            <geom name="FL_foot" type="sphere" size="0.025" friction="1.2 0.005 0.0001" rgba="0.15 0.2 0.25 1"/>
+          </body>
+        </body>
+      </body>
+
+      <body name="RR_hip" pos="-0.13 -0.075 0">
+        <inertial mass="0.15" pos="0 0 -0.055" diaginertia="0.0002 0.001 0.001"/>
+        <geom name="RR_thigh" type="capsule" size="0.02" fromto="0 0 0 0 0 -0.11" rgba="0.35 0.55 0.9 1"/>
+        <joint name="RR_hip_j" type="hinge" axis="0 1 0" range="-0.9 0.9"/>
+        <body name="RR_shank" pos="0 0 -0.11">
+          <inertial mass="0.1" pos="0 0 -0.055" diaginertia="0.0001 0.0008 0.0008"/>
+          <geom name="RR_shank" type="capsule" size="0.015" fromto="0 0 0 0 0 -0.11" rgba="0.3 0.75 0.4 1"/>
+          <joint name="RR_knee_j" type="hinge" axis="0 1 0" range="-0.3 1.2"/>
+          <body name="RR_foot" pos="0 0 -0.11">
+            <inertial mass="0.03" pos="0 0 0" diaginertia="0.0001 0.0001 0.0001"/>
+            <geom name="RR_foot" type="sphere" size="0.025" friction="1.2 0.005 0.0001" rgba="0.15 0.2 0.25 1"/>
+          </body>
+        </body>
+      </body>
+
+      <body name="RL_hip" pos="-0.13 0.075 0">
+        <inertial mass="0.15" pos="0 0 -0.055" diaginertia="0.0002 0.001 0.001"/>
+        <geom name="RL_thigh" type="capsule" size="0.02" fromto="0 0 0 0 0 -0.11" rgba="0.35 0.55 0.9 1"/>
+        <joint name="RL_hip_j" type="hinge" axis="0 1 0" range="-0.9 0.9"/>
+        <body name="RL_shank" pos="0 0 -0.11">
+          <inertial mass="0.1" pos="0 0 -0.055" diaginertia="0.0001 0.0008 0.0008"/>
+          <geom name="RL_shank" type="capsule" size="0.015" fromto="0 0 0 0 0 -0.11" rgba="0.3 0.75 0.4 1"/>
+          <joint name="RL_knee_j" type="hinge" axis="0 1 0" range="-0.3 1.2"/>
+          <body name="RL_foot" pos="0 0 -0.11">
+            <inertial mass="0.03" pos="0 0 0" diaginertia="0.0001 0.0001 0.0001"/>
+            <geom name="RL_foot" type="sphere" size="0.025" friction="1.2 0.005 0.0001" rgba="0.15 0.2 0.25 1"/>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+
+  <actuator>
+    <motor name="FR_hip_m" joint="FR_hip_j" gear="25" ctrllimited="true" ctrlrange="-1 1"/>
+    <motor name="FL_hip_m" joint="FL_hip_j" gear="25" ctrllimited="true" ctrlrange="-1 1"/>
+    <motor name="RR_hip_m" joint="RR_hip_j" gear="25" ctrllimited="true" ctrlrange="-1 1"/>
+    <motor name="RL_hip_m" joint="RL_hip_j" gear="25" ctrllimited="true" ctrlrange="-1 1"/>
+    <motor name="FR_knee_m" joint="FR_knee_j" gear="12" ctrllimited="true" ctrlrange="-1 1"/>
+    <motor name="FL_knee_m" joint="FL_knee_j" gear="12" ctrllimited="true" ctrlrange="-1 1"/>
+    <motor name="RR_knee_m" joint="RR_knee_j" gear="12" ctrllimited="true" ctrlrange="-1 1"/>
+    <motor name="RL_knee_m" joint="RL_knee_j" gear="12" ctrllimited="true" ctrlrange="-1 1"/>
+  </actuator>
+
+  <sensor>
+    <jointpos name="FR_hip_s" joint="FR_hip_j"/>
+    <jointpos name="FL_hip_s" joint="FL_hip_j"/>
+    <jointpos name="RR_hip_s" joint="RR_hip_j"/>
+    <jointpos name="RL_hip_s" joint="RL_hip_j"/>
+    <jointpos name="FR_knee_s" joint="FR_knee_j"/>
+    <jointpos name="FL_knee_s" joint="FL_knee_j"/>
+    <jointpos name="RR_knee_s" joint="RR_knee_j"/>
+    <jointpos name="RL_knee_s" joint="RL_knee_j"/>
+    <framequat name="torso_quat" objtype="site" objname="torso_site"/>
+    <framepos name="torso_pos" objtype="site" objname="torso_site"/>
+  </sensor>
+</mujoco>

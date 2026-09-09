@@ -14,7 +14,11 @@ private:
 
     static constexpr double ELIGIBILITY_DECAY = 0.9;
     static constexpr double LAST_ACTIVATED_DECAY = 0.95;
-    static constexpr double RESTING_STRENGTH = 0.05;
+    // Resting strength raised from the Java-original 0.05 to 0.25 so a single
+    // firing input (0.25 V/tick, ~2.9 V steady state vs the 1.0 V firing
+    // threshold) actually propagates through deep layers. At 0.05 the net is
+    // silent for continuous-control tasks (driving a MuJoCo robot).
+    static constexpr double RESTING_STRENGTH = 0.25;
     static constexpr double LEAK_RATE = 0.005;
     static constexpr double PING_BOOST = 0.001;
     static constexpr double HEBB_BOOST = 0.05;

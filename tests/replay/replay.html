@@ -23,7 +23,7 @@
   button.active { border-color: var(--accent); color: var(--accent); }
   input[type=range] { width: 260px; accent-color: var(--accent); }
   .chk { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
-  #views { flex: 1; display: flex; min-height: 0; }
+  #views { flex: 1; display: flex; min-height: 0; position: relative; }
   .view { position: relative; flex: 1 1 0; min-width: 0; }
   .view.hidden { display: none !important; }
   .view canvas { width: 100% !important; height: 100% !important; display: block; }
@@ -36,7 +36,7 @@
   .hud { position: absolute; z-index: 6; padding: 6px 9px; background: rgba(13,17,23,.72);
          border: 1px solid var(--line); border-radius: 5px; font-size: 11.5px;
          pointer-events: none; user-select: none; line-height: 1.5; }
-  .hud.tl { top: 34px; left: 8px; } .hud.tr { top: 8px; right: 8px; }
+  .hud.tl { top: 30px; left: 8px; } .hud.tr { top: 8px; right: 8px; }
   .hud.bl { bottom: 8px; left: 8px; } .hud.br { bottom: 8px; right: 8px; }
   .hud b { color: var(--text); font-weight: 600; }
   .hl-m { color: var(--mujoco); } .hl-o { color: var(--omnisim); }
@@ -94,13 +94,13 @@
       </div>
     </div>
     <div id="no-data">No recordings found for this scenario.</div>
+    <div class="hud tl" id="hud-tl"></div>
+    <div class="hud tr" id="hud-tr"></div>
+    <div class="hud bl" id="hud-bl"></div>
+    <div class="hud br" id="hud-br"></div>
   </div>
 </div>
 
-<div class="hud tl" id="hud-tl"></div>
-<div class="hud tr" id="hud-tr"></div>
-<div class="hud bl" id="hud-bl"></div>
-<div class="hud br" id="hud-br"></div>
 <div class="error-banner" id="err">…</div>
 
 <script type="importmap">
@@ -196,6 +196,10 @@ function parseCSV(text) {
   const ci = name => header.indexOf(name);
   const iiT = ci('time'), iiMs = ci('sim_time_ms'), iiX = ci('x'), iiY = ci('y'), iiZ = ci('z');
   const has = v => v >= 0;
+  // optional articulated pose: torso quaternion (qw,qx,qy,qz) + joint angles
+  const iiQw = ci('qw'), iiQx = ci('qx'), iiQy = ci('qy'), iiQz = ci('qz');
+  const iiJ = ['fr_hip','fl_hip','rr_hip','rl_hip','fr_knee','fl_knee','rr_knee','rl_knee'].map(ci);
+  const hasPose = [iiQw, iiQx, iiQy, iiQz, ...iiJ].every(i => i >= 0);
   const out = [];
   for (let r = 1; r < rows.length; r++) {
     const c = rows[r].split(',');
@@ -203,11 +207,16 @@ function parseCSV(text) {
     const num = (j, d = NaN) => (j >= 0 && c[j] !== undefined && c[j].trim() !== '' ? parseFloat(c[j]) : d);
     const x = num(iiX), y = num(iiY), z = num(iiZ);
     if (!isFinite(x) || !isFinite(y) || !isFinite(z)) continue;
-    out.push({
+    const s = {
       t: has(iiT) ? num(iiT) : (r - 1),
       sim: has(iiMs) ? num(iiMs) : null,
       x, y, z,
-    });
+    };
+    if (hasPose) {
+      s.q = [num(iiQw), num(iiQx), num(iiQy), num(iiQz)];
+      s.j = iiJ.map(j => num(j, 0));
+    }
+    out.push(s);
   }
   return out;
 }
@@ -219,7 +228,9 @@ function sampleAt(samples, t) {
     if (t <= samples[i].t) {
       const a = samples[i - 1], b = samples[i];
       const f = (t - a.t) / (b.t - a.t || 1);
-      return { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f, z: a.z + (b.z - a.z) * f };
+      const near = f <= 0.5 ? a : b;
+      return { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f, z: a.z + (b.z - a.z) * f,
+               q: near.q, j: near.j };
     }
   }
   return samples[samples.length - 1];
@@ -237,12 +248,106 @@ function trailPoints(samples, t, max = 600) {
 
 /* ---------------- scene objects ---------------- */
 const markers = {}, trails = {}, begins = {}, endMarks = {};
+const dogRig = {};   // eng -> { rig, mBox, legs:[{th,sh,ft}] }
 const starts = {};   // samples[0] pos
 const ends = {};     // samples.at(-1) pos
 
+/* --- articulated dog (dog_walk recording, pose columns qw..qz + 8 joints) --- */
+const YAXIS = new THREE.Vector3(0, 1, 0);
+function m2t(v) { return new THREE.Vector3(v.x, v.z, v.y); }  // muJoCo (z-up) -> three (y-up)
+
+function buildDogRig() {
+  const rig = new THREE.Group();
+  const mBox = new THREE.Mesh(
+    new THREE.BoxGeometry(1, 1, 1),
+    new THREE.MeshStandardMaterial({ color: 0xe69a33, roughness: 0.7 }));
+  mBox.scale.set(0.4, 0.1, 0.16);   // torso full size (x, up, z)
+  rig.add(mBox);
+  const unitCyl = new THREE.CylinderGeometry(1, 1, 1, 10);
+  const thm = new THREE.MeshStandardMaterial({ color: 0x598ce6, roughness: 0.7 });
+  const shm = new THREE.MeshStandardMaterial({ color: 0x4dbf66, roughness: 0.7 });
+  const ftm = new THREE.MeshStandardMaterial({ color: 0x26333f, roughness: 0.9 });
+  const legs = [];
+  for (let i = 0; i < 4; i++) {
+    const th = new THREE.Mesh(unitCyl, thm);
+    const sh = new THREE.Mesh(unitCyl, shm);
+    const ft = new THREE.Mesh(new THREE.SphereGeometry(0.025, 10, 8), ftm);
+    rig.add(th); rig.add(sh); rig.add(ft);
+    legs.push({ th, sh, ft });
+  }
+  return { rig, mBox, legs };
+}
+
+function placeCylinder(mesh, a, b, radius) {
+  const dir = b.clone().sub(a);
+  const len = dir.length();
+  if (len < 1e-9) { mesh.visible = false; return; }
+  mesh.visible = true;
+  mesh.position.copy(a).addScaledVector(dir, 0.5);
+  mesh.quaternion.setFromUnitVectors(YAXIS, dir.normalize());
+  mesh.scale.set(radius, len, radius);
+}
+
+// MuJoCo quaternion (w,x,y,z) -> rotation matrix (columns = R*e_i)
+function quatToM(m) { const q = m; const [w, x, y, z] = q;
+  return [
+    [1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)],
+    [2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x)],
+    [2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)],
+  ];
+}
+function romul(R, v) {
+  return [R[0][0] * v[0] + R[0][1] * v[1] + R[0][2] * v[2],
+          R[1][0] * v[0] + R[1][1] * v[1] + R[1][2] * v[2],
+          R[2][0] * v[0] + R[2][1] * v[1] + R[2][2] * v[2]];
+}
+// rotate v by theta about muJoCo +Y
+function rotY(v, t) {
+  const c = Math.cos(t), s = Math.sin(t);
+  return [v[0] * c + v[2] * s, v[1], -v[0] * s + v[2] * c];
+}
+const DOG_HIP = [[0.13, -0.075], [0.13, 0.075], [-0.13, -0.075], [-0.13, 0.075]]; // FR,FL,RR,RL
+const DOG_LEN = 0.11;
+
+function poseDog(d, s) {
+  const R = quatToM(s.q);
+  const t0 = [s.x, s.y, s.z];
+  // torso: three positions/quats
+  const bx = m2t(new THREE.Vector3(R[0][0], R[1][0], R[2][0]));
+  const by = m2t(new THREE.Vector3(R[0][1], R[1][1], R[2][1]));
+  const bz = m2t(new THREE.Vector3(R[0][2], R[1][2], R[2][2]));
+  const m = new THREE.Matrix4();
+  m.makeBasis(bx, by, bz);
+  d.mBox.position.copy(m2t(new THREE.Vector3(t0[0], t0[1], t0[2])));
+  d.mBox.quaternion.setFromRotationMatrix(m);
+
+  const down = [0, 0, -1];
+  for (let i = 0; i < 4; i++) {
+    const hx = DOG_HIP[i][0], hy = DOG_HIP[i][1];
+    const t1 = s.j[i], t2 = s.j[4 + i];
+    const hip = romul(R, [hx, hy, 0]).map((v, k) => v + t0[k]);
+    const v1 = romul(R, rotY(down, t1));
+    const knee = [hip[0] + v1[0] * DOG_LEN, hip[1] + v1[1] * DOG_LEN, hip[2] + v1[2] * DOG_LEN];
+    const v2 = romul(R, rotY(down, t1 + t2));
+    const foot = [knee[0] + v2[0] * DOG_LEN, knee[1] + v2[1] * DOG_LEN, knee[2] + v2[2] * DOG_LEN];
+    const A = m2t(new THREE.Vector3(hip[0], hip[1], hip[2]));
+    const B = m2t(new THREE.Vector3(knee[0], knee[1], knee[2]));
+    const C = m2t(new THREE.Vector3(foot[0], foot[1], foot[2]));
+    placeCylinder(d.legs[i].th, A, B, 0.02);
+    placeCylinder(d.legs[i].sh, B, C, 0.015);
+    d.legs[i].ft.position.copy(C);
+  }
+}
+
 function buildEngineObjects(eng) {
   const scene = scenes[eng];
-  if (trails[eng]) { scene.remove(trails[eng]); scene.remove(markers[eng]); scene.remove(begins[eng]); scene.remove(endMarks[eng]); }
+  if (trails[eng]) {
+    scene.remove(trails[eng]); scene.remove(markers[eng]); scene.remove(begins[eng]); scene.remove(endMarks[eng]);
+    if (dogRig[eng]) { scene.remove(dogRig[eng].rig); delete dogRig[eng]; }
+  }
+
+  const samples = state.recordings[eng] && state.recordings[eng].samples || [];
+  const hasPose = samples.length > 0 && !!samples[0].q;
 
   const trailMat = new THREE.LineBasicMaterial({ color: COLOR[eng], transparent: true, opacity: 0.85 });
   const trailGeo = new THREE.BufferGeometry();
@@ -253,6 +358,7 @@ function buildEngineObjects(eng) {
   const marker = new THREE.Mesh(
     new THREE.SphereGeometry(0.07, 20, 20),
     new THREE.MeshStandardMaterial({ color: COLOR[eng], emissive: COLOR[eng], emissiveIntensity: 0.35 }));
+  if (hasPose) marker.visible = false;   // articulated rig replaces the ball
   scene.add(marker);
 
   const begin = new THREE.Mesh(new THREE.SphereGeometry(0.045, 12, 12),
@@ -265,11 +371,18 @@ function buildEngineObjects(eng) {
   scene.add(endBox);
 
   trails[eng] = trail; markers[eng] = marker; begins[eng] = begin; endMarks[eng] = endBox;
+
+  if (hasPose) {
+    const d = buildDogRig();
+    scene.add(d.rig);
+    dogRig[eng] = d;
+  }
 }
 
 function frameEngine(eng, p) {
   if (!p) return;
   markers[eng].position.set(p.x, p.z, p.y);
+  if (dogRig[eng] && p.q && p.j) poseDog(dogRig[eng], p);
   const pts = trailPoints(state.recordings[eng].samples, state.t);
   const arr = new Float32Array(pts.length * 3);
   pts.forEach((v, i) => { arr[i * 3] = v.x; arr[i * 3 + 1] = v.y; arr[i * 3 + 2] = v.z; });

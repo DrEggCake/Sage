@@ -1,6 +1,7 @@
 #include "Brain.h"
 
 #include <algorithm>
+#include <stdexcept>
 
 
 Brain::Brain() {

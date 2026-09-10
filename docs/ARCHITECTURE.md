@@ -1083,3 +1083,113 @@ CI comparison flow (the whole point of the repo):
   before it enters three.js (MuJoCo `z` is up, three expects `y` up).
 - **keyframe** — one entry in the playback timeline; the union of all relative
   sample times across loaded engines.
+
+## 16. Experimental results: CPG, TD-critic reward, and evolutionary search
+
+Everything in this section lives on **experimental branches**, not master
+(`experimental/topology-evolution` for the evolutionary search, and
+`experimental/cpg-locomotion` for the CPG + TD-critic work below). The CPG
+results supersede the §13 "dog_walk learned a gait, not the task" bullet for
+the `--cpg 1` configuration.
+
+### 16.1 Why naive neuroevolution fails
+
+Added a champion-retention evolutionary mode to `dog_drive`
+(`--evolve --pop-size --champions --mutation-sigma --threshold-sigma`): keep
+the best N brains each round, jitter their synapse strengths, re-evaluate.
+Three experiment variants:
+
+| variant | fitness source | result |
+|---|---|---|
+| (1) score with exploration noise | distance of a noisy rollout | gen-1 best 1.65 m, then collapses to 0.09 m forever |
+| (2) fully frozen from birth | distance of a deterministic rollout | everything 0.03 m (no signal) |
+| (3) memetic | develop in place 1 ep, then score frozen | everything 0.09 m |
+
+**The finding:** the "walk" (1.4–1.65 m) is a *transient activation state* —
+voltage/eligibility/dopamine left over inside an episode — not a durable change
+in synaptic weights. Champions get rewritten by their own re-evaluation, so
+fitness never compounds. Neuroevolution cannot help a representation that has
+nothing durable to select on. `Brain::setFrozen(true)` (added alongside) freezes
+all Hebbian/dopamine/reward plasticity so a policy's true (weight-encoded)
+behavior can be scored reproducibly.
+
+### 16.2 CPG layer: a rhythm source for the quadruped
+
+`--cpg 1` overlays a central-pattern-generator on `dog_drive`:
+`--cpg-freq` (Hz), `--cpg-amp-hip`, `--cpg-amp-knee`, `--cpg-gain` (scale of the
+SNN's per-joint supraspinal correction; 0 = pure open-loop rhythm).
+
+Two coupled phase oscillators drive a diagonal **trot** (FR+RL share phase A,
+FL+RR = A+π):
+
+```
+phaseA += 2π·freq·dt                     # per physics tick
+hip_j   = cpgAmpHip·sin(φ_j)             # φ_j = phaseA + {0,π,π,0}
+knee_j  = −0.35 + cpgAmpKnee·max(0, sin φ_j)   # brace + flex pulse on swing
+ctrl_j  = clamp(rhythm_j + cpgGain·(OUT_j − 0.5), −1, 1)
+```
+
+Results on the default resonance (freq 1.6, hip −0.75, knee 0.6):
+deterministic open-loop gap produces **1.01 m forward / 24 s with zero
+learning** — equal to the best walks the entire evolutionary search ever found,
+with no training at all. Adding **gait phase feedback** (NIN 12 → 14; inputs
+i12=sin φA, i13=cos φA) was what crossed the target: first solved episodes at
+2.0 m (~ep 750 of a 1,500-ep run). The successes are still exploration-assisted
+transients, not weights (frozen exploit ≈ 0.21 m at this stage).
+
+### 16.3 TD critic / δ reward (credit-assignment fix, stage 1)
+
+`--critic 1 --critic-lr R --gamma G` replaces the raw per-tick reward with a
+reward-prediction error. A linear critic `V̂(s) = w·φ(s)` over the input vector
+predicts expected future progress; each tick feeds the brain
+
+```
+δ_t = r_t + γ·V̂(s_{t+1}) − V̂(s_t)       # TD error, w updated by α_C·δ·φ
+δ_term = termReward − V̂(last state)      # terminal bootstrap
+```
+
+Same task, same seed, 10k episodes:
+
+| 10k eps, seed 42 | plain reward | critic (clean run) |
+|---|---|---|
+| successes | 9 | 19 |
+| first success | ~ep 3000 | ~ep 1000 |
+| avg dist | 0.41 m | 0.42 m |
+| frozen exploit (best/avg) | 0.21 m | 1.12 m / 0.6 m |
+| mean|OUT| (saturation check) | ~3120 | ~1300 |
+
+Two robust takeaways despite the sim's chaos (see the variance note below):
+1. **δ removed the destructive attractor.** The plain rule drives every output
+   to saturation (~3120 mean |OUT|) so the learned brain actively *kills* the
+   1 m open-loop rhythm when exploited frozen (0.21 m). Under δ the brain
+   learns to sit near neutral and its frozen exploit **reproduces the CPG
+   baseline** (~1.1 m / 0.6 m). That is the durability win.
+2. **2 m still needs exploration.** Successes arrive earlier and a bit more
+   often, but remain jitter-assisted transients. The known next lever is
+   **per-neuron learning signals (reward-based e-prop)** plus a critic with
+   temporal state (joint velocities, not just positions) — a scalar δ broadcast
+   to every synapse still cannot say *which* neuron caused the extra step.
+
+**Chaos warning for experiments.** Single-seed numbers are unstable: an earlier
+critic run (with a NaN-output bug in `getOutput` sampling) reported 26
+successes / avg 0.92 m at the same seed where the clean build gave 19 / 0.42 m.
+A NaN output corrupts one episode's ctrl and—via differing rng consumption
+(fewer 2-3 draws before `break`)—redirects all later training. Compare only
+multi-seed averages, or the robustness signals above; `std::isfinite` guards
+were added around δ and the ctrl readout to stop the poisoned episodes.
+
+### 16.4 Physics findings (why the dog occasionally launches)
+
+From `tests/models/dog_walk.xml`:
+
+- **Friction is not the problem.** Feet `friction="1.2 0.005 0.0001"`, floor
+  default `1.0`; plenty of grip.
+- **Joints are clamped.** Hips `range="-0.9 0.9"` (±51°), knees
+  `range="-0.3 1.2"`, all `limited="true"` — but the clamps are hit hard.
+- **Motor authority is extreme for the body.** Hips `gear=25` (±25 N·m), knees
+  `gear=12`, on a ~1.9 kg dog with light `damping=0.3`/`armature=0.02`. A leg
+  swinging near resonance hits its hinge limit and the surplus torque fires
+  the whole torso off the ground — the "random launch" in replays. A
+  model-hardening pass (hip gear 25→~10, knee 12→~5, damping 0.3→~0.8, CPG amp
+  retune) is the documented fix to try next; it changes the environment, so it
+  belongs on an experimental branch, not master.

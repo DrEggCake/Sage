@@ -16,7 +16,7 @@ The C++ port now implements the full Sage-Java brain engine:
 
 Plus a **cross-simulator test harness** that runs fixed, deterministic scenarios on
 MuJoCo and (via its HTTP harness) OmniSim, comparing trajectories and terminal
-metrics. See `tests/README.md`.
+metrics. See `docs/ARCHITECTURE.md`.
 
 ## Build
 

@@ -32,6 +32,13 @@
 //                    [--learning-rate R] [--reward-progress W] [--seed S]
 //                    [--brain FILE] [--save-dir DIR] [--record FILE]
 //                    [--fire-log FILE] [--report FILE]
+//                    [--cpg N] [--cpg-freq F] [--cpg-amp-hip A] [--cpg-amp-knee A]
+//                    [--cpg-gain G]
+//
+//   CPG mode (--cpg 1) overlays a central pattern generator: two diagonal
+//   phase oscillators produce a trot rhythm for the hips plus knee flexion
+//   during swing, and the SNN learns a per-joint supraspinal correction on
+//   top (cerebellar-style). --cpg-gain 0 runs the open-loop rhythm alone.
 //
 //   --record FILE write final torso trajectory (time,x,y,z,vx,vy,vz)
 //   --fire-log FILE write final-episode SNN firing log (+ .meta.json sidecar)
@@ -93,6 +100,14 @@ int main(int argc, char** argv) {
     std::string recordCsv;
     std::string fireLog;
     std::string reportCsv;
+    bool useCpg = false;
+    double cpgFreq = 1.6;
+    double cpgAmpHip = -0.75;
+    double cpgAmpKnee = 0.6;
+    double cpgGain = 0.5;
+    bool useCritic = false;
+    double criticLr = 0.1;
+    double gamma = 0.9;
 
     for (int i = 1; i < argc; i++) {
         const std::string a = argv[i];
@@ -115,15 +130,28 @@ int main(int argc, char** argv) {
         else if (a == "--record" && has) recordCsv = argv[++i];
         else if (a == "--fire-log" && has) fireLog = argv[++i];
         else if (a == "--report" && has) reportCsv = argv[++i];
+        else if (a == "--cpg" && has) useCpg = num(argv[++i]) != 0.0;
+        else if (a == "--cpg-freq" && has) cpgFreq = num(argv[++i]);
+        else if (a == "--cpg-amp-hip" && has) cpgAmpHip = num(argv[++i]);
+        else if (a == "--cpg-amp-knee" && has) cpgAmpKnee = num(argv[++i]);
+        else if (a == "--cpg-gain" && has) cpgGain = num(argv[++i]);
+        else if (a == "--critic" && has) useCritic = num(argv[++i]) != 0.0;
+        else if (a == "--critic-lr" && has) criticLr = num(argv[++i]);
+        else if (a == "--gamma" && has) gamma = num(argv[++i]);
         else if (a == "--help") {
             std::cout << "Usage: dog_drive [--episodes N] [--steps N] [--target-dist M]\n"
                       << "                 [--epsilon-start E] [--epsilon-end E] [--explore-amp A]\n"
                       << "                 [--learning-rate R] [--reward-progress W] [--seed S]\n"
                       << "                 [--brain FILE] [--save-dir DIR] [--record FILE]\n"
-                      << "                 [--fire-log FILE] [--report FILE]\n";
+                      << "                 [--fire-log FILE] [--report FILE]\n"
+                      << "                 [--cpg N] [--cpg-freq F] [--cpg-amp-hip A]\n"
+                      << "                 [--cpg-amp-knee A] [--cpg-gain G]\n"
+                      << "                 [--critic N] [--critic-lr R] [--gamma G]\n";
             return 0;
         }
     }
+
+    const int nin = useCpg ? NIN + 2 : NIN;  // CPG mode adds 2 phase inputs
 
     std::string modelPath = findModel("dog_walk");
     char error[1000];
@@ -163,7 +191,7 @@ int main(int argc, char** argv) {
     for (int i = 0; i < 8; i++) adrJ[i] = m->sensor_adr[senJ[i]];
     const int adrQ = m->sensor_adr[senQ];
 
-    Brain brain(NIN, NL1, NL2, NL3, NOUT, 6, 5, 5, 4);
+    Brain brain(nin, NL1, NL2, NL3, NOUT, 6, 5, 5, 4);
     if (!brainFile.empty()) {
         try {
             brain = BrainSave::load(brainFile);
@@ -188,11 +216,18 @@ int main(int argc, char** argv) {
     std::cout << "Sage quadruped walk (dog_walk)\n"
               << "  episodes " << episodes << ", steps/ep " << steps
               << " (" << steps * m->opt.timestep << " s), target " << targetDist << " m\n"
-              << "  topology " << NIN << "," << NL1 << "," << NL2 << "," << NL3 << "," << NOUT
+              << "  topology " << nin << "," << NL1 << "," << NL2 << "," << NL3 << "," << NOUT
               << ", lr " << learningRate << ", reward-progress " << rewardProgress
               << ", seed " << seed << "\n"
               << "  epsilon " << epsilonStart << " -> " << epsilonEnd
               << ", explore amp " << exploreAmp << "\n";
+    if (useCpg) {
+        std::cout << "  CPG on: freq " << cpgFreq << " Hz, hip amp " << cpgAmpHip
+                  << ", knee amp " << cpgAmpKnee << ", snn-gain " << cpgGain << "\n";
+    }
+    if (useCritic) {
+        std::cout << "  critic: TD(delta) reward, lr " << criticLr << ", gamma " << gamma << "\n";
+    }
 
     std::mt19937 rng(seed);
     std::uniform_real_distribution<double> unit(-1.0, 1.0);
@@ -220,6 +255,17 @@ int main(int argc, char** argv) {
     int bestCtrlSteps = 0;
     double recordedBest = -1.0;
 
+    // --- learned critic (TD/delta reward) ---
+    // Vhat(s) = w[0] + sum_i w[i+1]*s_i predicts expected future progress;
+    // delta_t = r_t + gamma*Vhat(s_{t+1}) - Vhat(s_t) drives the brain instead
+    // of the raw tick reward, so only steps that beat expectation are credited.
+    std::vector<double> criticW(nin + 1, 0.0);
+    auto criticValue = [&](const std::vector<double>& w, const std::vector<double>& s) {
+        double v = w[0];
+        for (int i = 0; i < nin; i++) v += w[i + 1] * s[i];
+        return v;
+    };
+
     for (int ep = 0; ep < episodes; ep++) {
 
         double eps = epsilonEnd;
@@ -232,6 +278,11 @@ int main(int argc, char** argv) {
         brain.reset();
         brain.resetOutputs();
 
+        // Trot CPG: two diagonal oscillators (FR+RL in phase A, FL+RR in A+pi).
+        double phaseA = 0.0;
+        const double dPhase = 2.0 * M_PI * cpgFreq * m->opt.timestep;
+        const double legPhase[4] = { 0.0, M_PI, M_PI, 0.0 };  // FR, FL, RR, RL
+
         double travelled = 0.0;
         double prevX = d->xpos[3 * torsoBody + 0];
         double epReward = 0.0;
@@ -239,13 +290,12 @@ int main(int argc, char** argv) {
         bool success = false;
         bool fell = false;
 
-        std::vector<double> curCtrls;
-        curCtrls.reserve(steps * NOUT);
-
-        for (int t = 0; t < steps; t++) {
-
-            // --- sense: proprioception only ---
-            const double* upQ = d->sensordata + adrQ; // (w,x,y,z)
+        // Proprioceptive sensing, reusable for both the act step and the
+        // TD next-state value.
+        std::vector<double> ins(nin);
+        std::vector<double> insNext(nin);
+        auto senseFill = [&](std::vector<double>& out) {
+            const double* upQ = d->sensordata + adrQ;
             const double qw = upQ[0], qx = upQ[1], qy = upQ[2], qz = upQ[3];
             const double upx = 2.0 * (qw * qy + qz * qx);
             const double upy = 2.0 * (qz * qy - qw * qx);
@@ -253,30 +303,54 @@ int main(int argc, char** argv) {
             const double pitch = std::atan2(upx, upz);
             const double roll = std::atan2(upy, upz);
             const double h = d->xpos[3 * torsoBody + 2];
-
-            std::vector<double> ins(NIN);
-            for (int i = 0; i < 8; i++) {
-                ins[i] = clamp(d->sensordata[adrJ[i]] * 2.0, -2.0, 2.0);
+            for (int i = 0; i < 8; i++) out[i] = clamp(d->sensordata[adrJ[i]] * 2.0, -2.0, 2.0);
+            out[8] = clamp(pitch / 0.5, -2.0, 2.0);
+            out[9] = clamp(roll / 0.5, -2.0, 2.0);
+            out[10] = clamp((h - 0.27) / 0.2, -2.0, 2.0);
+            out[11] = 1.5;  // constant drive channel
+            if (useCpg) {
+                out[12] = std::sin(phaseA);  // gait phase feedback
+                out[13] = std::cos(phaseA);
             }
-            ins[8] = clamp(pitch / 0.5, -2.0, 2.0);
-            ins[9] = clamp(roll / 0.5, -2.0, 2.0);
-            ins[10] = clamp((h - 0.27) / 0.2, -2.0, 2.0);
-            ins[11] = 1.5;  // constant drive channel
+        };
+        double termV = 0.0;          // critic value at the last state (for terminal delta)
+        std::vector<double> termPhi(nin, 0.0);
 
-            for (int i = 0; i < NIN; i++) brain.setInput(i, ins[i]);
+        std::vector<double> curCtrls;
+        curCtrls.reserve(steps * NOUT);
+
+        for (int t = 0; t < steps; t++) {
+
+            // --- sense: proprioception only ---
+            senseFill(ins);
+            const double Vnow = useCritic ? criticValue(criticW, ins) : 0.0;
+
+            for (int i = 0; i < nin; i++) brain.setInput(i, ins[i]);
 
             brain.tick();
 
             // --- act: torque per joint from output voltage + explore noise ---
             const bool explore = coin(rng) < eps;
+            if (useCpg) phaseA += dPhase;
             for (int j = 0; j < NOUT; j++) {
-                const double vc = clamp(brain.getOutput(j), 0.0, 1.0);
-                const double bias = j < 4 ? -0.1 : -0.45;   // hips loose, knees braced
-                double ctrl = clamp(1.25 * vc + bias, -1.0, 1.0);
+                double ctrl;
+                const double raw = brain.getOutput(j);
+                const double vc = std::isfinite(raw) ? clamp(raw, 0.0, 1.0) : 0.5;
+                if (useCpg) {
+                    // Leg j is hip for j<4, knee for j>=4; diagonal trot rhythm.
+                    const double phi = phaseA + legPhase[j % 4];
+                    const double rhythm = j < 4 ? cpgAmpHip * std::sin(phi)
+                                                : -0.35 + cpgAmpKnee * std::max(0.0, std::sin(phi));
+                    double correction = cpgGain * (vc - 0.5);
+                    ctrl = clamp(rhythm + correction, -1.0, 1.0);
+                } else {
+                    const double bias = j < 4 ? -0.1 : -0.45;   // hips loose, knees braced
+                    ctrl = clamp(1.25 * vc + bias, -1.0, 1.0);
+                }
                 if (explore) ctrl = clamp(ctrl + exploreAmp * unit(rng), -1.0, 1.0);
                 d->ctrl[act[j]] = ctrl;
                 curCtrls.push_back(ctrl);
-                outSum += std::abs(brain.getOutput(j));
+                outSum += std::isfinite(raw) ? std::abs(raw) : 0.0;
                 outN++;
             }
 
@@ -288,7 +362,22 @@ int main(int argc, char** argv) {
             travelled += std::max(0.0, dx);
             prevX = newX;
             rewardStep = clamp(dx * rewardProgress, -0.03, 0.03);
-            brain.reward(rewardStep);
+            if (useCritic) {
+                // TD: delta = r + gamma*V(s') - V(s); reward only the surprise
+                // (positive on steps that beat the running prediction).
+                senseFill(insNext);
+                const double Vnext = criticValue(criticW, insNext);
+                const double delta = rewardStep + gamma * Vnext - Vnow;
+                if (std::isfinite(delta)) {
+                    brain.reward(delta);
+                    criticW[0] += criticLr * delta;
+                    for (int i = 0; i < nin; i++) criticW[i + 1] += criticLr * delta * insNext[i];
+                }
+                termV = Vnext;
+                termPhi = insNext;
+            } else {
+                brain.reward(rewardStep);
+            }
             epReward += rewardStep;
 
             // --- termination checks ---
@@ -314,7 +403,17 @@ int main(int argc, char** argv) {
         }
 
         const double termReward = success ? 2.0 : (fell ? -1.0 : -0.3);
-        brain.reward(termReward);
+        if (useCritic) {
+            // Terminal bootstrap: delta = termReward + 0 - V(last state).
+            const double deltaTerm = termReward - termV;
+            if (std::isfinite(deltaTerm)) {
+                brain.reward(deltaTerm);
+                criticW[0] += criticLr * deltaTerm;
+                for (int i = 0; i < nin; i++) criticW[i + 1] += criticLr * deltaTerm * termPhi[i];
+            }
+        } else {
+            brain.reward(termReward);
+        }
         epReward += termReward;
         totalRewardAcc += epReward;
         if (success) successCount++;
@@ -377,14 +476,14 @@ int main(int argc, char** argv) {
         auto lp = std::filesystem::path(fireLog);
         if (lp.has_parent_path()) std::filesystem::create_directories(lp.parent_path());
         logger.open(fireLog);
-        logger << "# topology " << NIN << "," << NL1 << "," << NL2 << "," << NL3 << "," << NOUT << "\n";
+        logger << "# topology " << nin << "," << NL1 << "," << NL2 << "," << NL3 << "," << NOUT << "\n";
         logger << "# task dog_walk episodes " << episodes << " steps " << steps
                << " targetDist " << targetDist << " timestep " << m->opt.timestep
                << " hz " << (1.0 / m->opt.timestep)
                << " seed " << seed << " lr " << learningRate
                << " epsilonStart " << epsilonStart << " epsilonEnd " << epsilonEnd << "\n";
         logger << "ep,tick";
-        for (int i = 0; i < NIN; i++) logger << ",i" << i;
+        for (int i = 0; i < nin; i++) logger << ",i" << i;
         for (int i = 0; i < NTOT; i++) logger << ",f" << i;
         logger << '\n';
     }
@@ -395,6 +494,7 @@ int main(int argc, char** argv) {
         mj_resetData(m, d);
         brain.reset();
         brain.resetOutputs();
+        double phaseA = 0.0;  // replay starts a fresh CPG phase (trace is pre-recorded)
         double prevX = d->xpos[3 * torsoBody + 0];
         double dist = 0.0;
         int traceSteps = bestCtrlSteps > 0 ? bestCtrlSteps : steps;
@@ -405,13 +505,17 @@ int main(int argc, char** argv) {
             const double upy = 2.0 * (qz * qy - qw * qx);
             const double upz = 1.0 - 2.0 * (qx * qx + qy * qy);
             const double h = d->xpos[3 * torsoBody + 2];
-            std::vector<double> ins(NIN);
+            std::vector<double> ins(nin);
             for (int i = 0; i < 8; i++) ins[i] = clamp(d->sensordata[adrJ[i]] * 2.0, -2.0, 2.0);
             ins[8] = clamp(std::atan2(upx, upz) / 0.5, -2.0, 2.0);
             ins[9] = clamp(std::atan2(upy, upz) / 0.5, -2.0, 2.0);
             ins[10] = clamp((h - 0.27) / 0.2, -2.0, 2.0);
             ins[11] = 1.5;  // constant drive channel
-            for (int i = 0; i < NIN; i++) brain.setInput(i, ins[i]);
+            if (useCpg) {
+                ins[12] = std::sin(phaseA);
+                ins[13] = std::cos(phaseA);
+            }
+            for (int i = 0; i < nin; i++) brain.setInput(i, ins[i]);
             brain.tick();
             for (int j = 0; j < NOUT; j++) {
                 d->ctrl[act[j]] = bestCtrls[(size_t)t * NOUT + j];
@@ -447,7 +551,7 @@ int main(int argc, char** argv) {
         std::ofstream meta(metaPath);
         meta << "{\n"
              << "  \"brain\": \"" << file.filename().string() << "\",\n"
-             << "  \"layerSizes\": [" << NIN << "," << NL1 << "," << NL2 << "," << NL3 << "," << NOUT << "],\n"
+             << "  \"layerSizes\": [" << nin << "," << NL1 << "," << NL2 << "," << NL3 << "," << NOUT << "],\n"
              << "  \"wiringLimits\": [6,5,5,4],\n"
              << "  \"episodes\": " << episodes << ",\n"
              << "  \"decisionTicks\": " << steps << ",\n"
